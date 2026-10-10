@@ -47,6 +47,9 @@ def job_specs(settings: Settings) -> list[JobSpec]:
         JobSpec("tracking", 60, 280, lambda col: col.update_tracking),
         # Selection (Phase 3): reads stored data only, never calls providers.
         JobSpec("scoring", 15, 240, lambda col: partial(run_scoring, col.factory)),
+        # Early detection (Phase 4): entry quotes right after alerts, outcomes as they mature.
+        JobSpec("alert_entry_quotes", 5, 270, lambda col: col.alert_entry_quotes),
+        JobSpec("alert_outcomes", 15, 290, lambda col: col.alert_outcomes),
     ]
 
 

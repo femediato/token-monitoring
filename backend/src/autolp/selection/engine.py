@@ -12,9 +12,16 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from autolp.collector.runs import JobResult
-from autolp.db.models import ScoreEvaluation, WatchlistEvent, WatchlistMember
+from autolp.db.models import (
+    AlertObservation,
+    EarlyAlert,
+    EarlyScore,
+    ScoreEvaluation,
+    WatchlistEvent,
+    WatchlistMember,
+)
 from autolp.log import get_logger
-from autolp.selection import eligibility, scoring, watchlist
+from autolp.selection import early, eligibility, scoring, watchlist
 from autolp.selection.features import compute_features, load_contexts
 from autolp.selection.params import MODEL_VERSION
 
@@ -94,6 +101,7 @@ async def run_scoring(
                 )
             )
         changes = await _apply_watchlist(session, rows, at, hourly)
+        alerts = await _early_detection(session, rows, at)
 
     eligible = sum(1 for r in rows.values() if r["eligible"])
     log.info(
@@ -102,8 +110,9 @@ async def run_scoring(
         eligible=eligible,
         hourly=hourly,
         changes=len(changes),
+        alerts=alerts,
     )
-    return JobResult(rows_written=len(rows) + len(changes))
+    return JobResult(rows_written=2 * len(rows) + len(changes) + alerts)
 
 
 def _as_eval(r: Any) -> watchlist.Eval:
@@ -202,3 +211,94 @@ async def _apply_watchlist(
                 )
             )
     return changes
+
+
+async def _early_detection(
+    session: AsyncSession, rows: dict[str, dict[str, Any]], at: datetime
+) -> int:
+    """Store early-detection scores for every token; alert on eligible tokens reaching the
+    alert threshold (with a per-token cooldown) and pick matched controls at the same time."""
+    p = early.EARLY
+    scores = {m: early.early_score(r["features"]) for m, r in rows.items()}
+    if scores:
+        await session.execute(
+            insert(EarlyScore).values(
+                [
+                    {
+                        "token_mint": m,
+                        "evaluated_at": at,
+                        "model_version": early.EARLY_MODEL_VERSION,
+                        "score": e.score,
+                        "state": e.state,
+                        "signals": e.signals,
+                        "eligible": rows[m]["eligible"],
+                    }
+                    for m, e in scores.items()
+                ]
+            )
+        )
+    recent = set(
+        await session.scalars(
+            select(EarlyAlert.token_mint).where(
+                EarlyAlert.at > at - timedelta(hours=p.alert_cooldown_hours)
+            )
+        )
+    )
+    alerted = [
+        m
+        for m, e in scores.items()
+        if rows[m]["eligible"] and e.score >= p.alert_min_score and m not in recent
+    ]
+    # Controls: eligible, no early signal state at this moment, not alerted recently.
+    pool = [
+        m
+        for m, e in scores.items()
+        if rows[m]["eligible"] and e.score < p.monitor and m not in recent and m not in alerted
+    ]
+    for m in alerted:
+        f, e = rows[m]["features"], scores[m]
+        alert = EarlyAlert(
+            token_mint=m,
+            at=at,
+            model_version=early.EARLY_MODEL_VERSION,
+            score=e.score,
+            state=e.state,
+            signals=e.signals,
+            price_usd=f.get("price_usd"),
+            market_cap=f.get("market_cap"),
+            liquidity_usd=f.get("liquidity_usd"),
+            pre_return_1h_pct=f.get("ret_1h_pct"),
+            pre_return_4h_pct=f.get("ret_4h_pct"),
+        )
+        session.add(alert)
+        await session.flush()
+        session.add(
+            AlertObservation(
+                alert_id=alert.id,
+                role="alert",
+                token_mint=m,
+                start_at=at,
+                start_price=f.get("price_usd"),
+            )
+        )
+        ranked = sorted(
+            (
+                (d, c)
+                for c in pool
+                if (d := early.match_distance(f, rows[c]["features"])) is not None
+            ),
+            key=lambda x: x[0],
+        )[: p.controls_per_alert]
+        for d, c in ranked:
+            session.add(
+                AlertObservation(
+                    alert_id=alert.id,
+                    role="control",
+                    token_mint=c,
+                    start_at=at,
+                    start_price=rows[c]["features"].get("price_usd"),
+                    match_distance=d,
+                )
+            )
+        log.info("early_alert", mint=m, score=e.score, state=e.state, fired=e.fired)
+    return len(alerted)

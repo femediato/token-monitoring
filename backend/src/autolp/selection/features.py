@@ -36,6 +36,7 @@ class TokenContext:
     snapshots: list[Snapshot]  # ascending by time, within HISTORY
     depth_now: float | None  # sqrt(base reserve * quote reserve) of the primary pool
     depth_24h: float | None
+    depth_6h: float | None
     security: dict[str, Any] | None
     holders: dict[str, Any] | None
     quote: dict[str, Any] | None
@@ -106,6 +107,7 @@ def compute_features(ctx: TokenContext, at: datetime) -> dict[str, Any]:
     p1 = prev.windows.get("1h") if prev else None
     v1 = w1.get("volume_usd") if w1 else None
     v24 = f["volume_24h"]
+    f["volume_1h"] = v1
     f["relvol_ratio"] = _ratio(v1, v24 / 24 if v24 else None)
     f["trader_growth_ratio"] = _ratio(
         w1.get("num_traders") if w1 else None, p1.get("num_traders") if p1 else None
@@ -133,6 +135,7 @@ def compute_features(ctx: TokenContext, at: datetime) -> dict[str, Any]:
     prices = [s.price for s in snaps if s.price]
     f["prices_n"] = len(prices)
     f["ema_ratio"] = _ema(prices, 20) / _ema(prices, 50) - 1 if len(prices) >= 50 else None
+    f["ema20_gap"] = prices[-1] / _ema(prices, 20) - 1 if len(prices) >= 20 else None
     hi = [s.price for s in snaps if s.price and s.at >= at - timedelta(hours=4)]
     f["dist_from_4h_high_pct"] = (
         (1 - last.price / max(hi)) * 100 if last and last.price and hi else None
@@ -141,6 +144,7 @@ def compute_features(ctx: TokenContext, at: datetime) -> dict[str, Any]:
     # ---- liquidity
     f["vol_liq_ratio"] = _ratio(v24, f["liquidity_usd"])
     f["depth_ratio_24h"] = _ratio(ctx.depth_now, ctx.depth_24h)
+    f["depth_ratio_6h"] = _ratio(ctx.depth_now, ctx.depth_6h)
 
     # ---- buying pressure (1h)
     bv = w1.get("buy_volume_usd") if w1 else None
@@ -229,7 +233,11 @@ async def load_contexts(session: AsyncSession, at: datetime) -> dict[str, TokenC
            ORDER BY token_mint, quoted_at DESC"""
     )
     depth: dict[tuple[str, str], float | None] = {}
-    for label, target in (("now", at), ("24h", at - timedelta(hours=24))):
+    for label, target in (
+        ("now", at),
+        ("6h", at - timedelta(hours=6)),
+        ("24h", at - timedelta(hours=24)),
+    ):
         res = await session.execute(
             text(
                 """
@@ -259,6 +267,7 @@ async def load_contexts(session: AsyncSession, at: datetime) -> dict[str, TokenC
             snapshots=sorted(snaps.get(t.mint, {}).values(), key=lambda s: s.at),
             depth_now=depth.get((pool, "now")) if pool else None,
             depth_24h=depth.get((pool, "24h")) if pool else None,
+            depth_6h=depth.get((pool, "6h")) if pool else None,
             security=security.get(t.mint),
             holders=holders.get(t.mint),
             quote=quotes.get(t.mint),

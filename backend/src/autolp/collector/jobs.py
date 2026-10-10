@@ -18,7 +18,9 @@ from autolp.collector.runs import JobResult
 from autolp.config import Settings
 from autolp.db.base import utcnow
 from autolp.db.models import (
+    AlertObservation,
     Candle5m,
+    EarlyAlert,
     HolderSnapshot,
     MarketSnapshot,
     MarketWindowStats,
@@ -845,6 +847,120 @@ class Collector:
             result.rows_written += 1
         if targets and failures == len(targets):
             raise AllRequestsFailed(f"all {len(targets)} quotes failed")
+        return result
+
+    # ------------------------------------------------------------------ early alerts
+
+    async def alert_entry_quotes(self, run_id: int) -> JobResult:
+        """Executable $1,000 USDC->token buy quote (paired with $10) for each new alert, so the
+        evaluation knows whether a realistic entry was available."""
+        now = utcnow()
+        window = timedelta(minutes=30)
+        async with self.factory() as session:
+            pending = (
+                await session.execute(
+                    select(EarlyAlert.id, EarlyAlert.token_mint, EarlyAlert.at).where(
+                        EarlyAlert.entry_quoted_at.is_(None), EarlyAlert.entry_error.is_(None)
+                    )
+                )
+            ).all()
+        result = JobResult()
+        usdc = 10**jupiter.USDC_DECIMALS
+        for alert_id, mint, at in pending:
+            values: dict[str, Any]
+            responses: list[ProviderResponse] = []
+            if now - at > window:
+                values = {"entry_error": "entry_quote_missed"}
+            else:
+                try:
+                    ref = await self.jup.quote(
+                        jupiter.USDC_MINT, mint, int(self.cfg.quote_reference_usd * usdc)
+                    )
+                    responses.append(ref)
+                    full = await self.jup.quote(
+                        jupiter.USDC_MINT, mint, int(self.cfg.quote_sell_usd * usdc)
+                    )
+                    responses.append(full)
+                    rq, fq = jupiter.parse_quote(ref.payload), jupiter.parse_quote(full.payload)
+                    # Tokens received per USDC at full size vs. at reference size.
+                    cost = (
+                        1
+                        - (fq.out_amount_raw / fq.in_amount_raw)
+                        / (rq.out_amount_raw / rq.in_amount_raw)
+                    ) * 100
+                    values = {"entry_quoted_at": full.fetched_at, "entry_cost_pct": cost}
+                except (ProviderError, KeyError, ValueError, ZeroDivisionError) as exc:
+                    values = {"entry_error": f"{type(exc).__name__}: {exc}"}
+                result.api_credits_used += len(responses) or 1
+            async with self.factory() as session, session.begin():
+                for r in responses:
+                    await store_raw(session, r, run_id)
+                await session.execute(
+                    update(EarlyAlert).where(EarlyAlert.id == alert_id).values(**values)
+                )
+            result.rows_written += 1
+        return result
+
+    async def alert_outcomes(self, run_id: int) -> JobResult:
+        """Fill forward returns (1/4/12/24h) and 24h excursions for alerts and controls from
+        stored 5-minute price snapshots. A horizon with no snapshot within ±10 minutes is
+        recorded as missing rather than interpolated."""
+        now = utcnow()
+        tol = timedelta(minutes=10)
+        horizons = {1: "ret_1h_pct", 4: "ret_4h_pct", 12: "ret_12h_pct", 24: "ret_24h_pct"}
+        result = JobResult()
+        async with self.factory() as session, session.begin():
+            obs = (
+                await session.scalars(
+                    select(AlertObservation).where(AlertObservation.completed_at.is_(None))
+                )
+            ).all()
+            for o in obs:
+                missing = set(o.missing or [])
+                for h, field in horizons.items():
+                    target = o.start_at + timedelta(hours=h)
+                    if getattr(o, field) is not None or f"{h}h" in missing or now < target + tol:
+                        continue
+                    price = await session.scalar(
+                        select(MarketSnapshot.price_usd)
+                        .where(
+                            MarketSnapshot.token_mint == o.token_mint,
+                            MarketSnapshot.source == jupiter.SOURCE,
+                            MarketSnapshot.observed_at.between(target - tol, target + tol),
+                            MarketSnapshot.price_usd.is_not(None),
+                        )
+                        .order_by(
+                            func.abs(func.extract("epoch", MarketSnapshot.observed_at - target))
+                        )
+                        .limit(1)
+                    )
+                    if price is None or not o.start_price:
+                        missing.add(f"{h}h")
+                    else:
+                        setattr(o, field, (price / o.start_price - 1) * 100)
+                    result.rows_written += 1
+                end = o.start_at + timedelta(hours=24)
+                if now >= end + tol:
+                    hi, lo = (
+                        await session.execute(
+                            select(
+                                func.max(MarketSnapshot.price_usd),
+                                func.min(MarketSnapshot.price_usd),
+                            ).where(
+                                MarketSnapshot.token_mint == o.token_mint,
+                                MarketSnapshot.source == jupiter.SOURCE,
+                                MarketSnapshot.observed_at > o.start_at,
+                                MarketSnapshot.observed_at <= end,
+                            )
+                        )
+                    ).one()
+                    if hi is not None and lo is not None and o.start_price:
+                        o.mfe_24h_pct = (hi / o.start_price - 1) * 100
+                        o.mae_24h_pct = (lo / o.start_price - 1) * 100
+                    else:
+                        missing.add("excursion")
+                    o.completed_at = now
+                o.missing = sorted(missing) or None
         return result
 
     # ------------------------------------------------------------------ tracking tiers

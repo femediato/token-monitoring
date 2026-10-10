@@ -330,3 +330,68 @@ export interface InfraCandidates {
   tokens_analysed: number;
   candidates: { owner: string; tokens: number; avg_pct: number; max_pct: number; excluded: boolean }[];
 }
+
+export interface EarlyBoard {
+  model_version: string;
+  evaluated_at: string | null;
+  signals: string[];
+  alert_min_score: number;
+  states: Record<string, number>;
+  items: {
+    mint: string;
+    symbol: string | null;
+    name: string | null;
+    score: number;
+    state: string;
+    signals: Record<string, boolean | null>;
+    eligible: boolean;
+    price_usd: Num;
+    ret_1h_pct: Num;
+    market_cap: Num;
+    liquidity_usd: Num;
+    volume_1h: Num;
+  }[];
+}
+
+export interface EarlyAlertRow {
+  id: number;
+  at: string;
+  mint: string;
+  symbol: string | null;
+  score: number;
+  state: string;
+  signals: Record<string, boolean | null>;
+  price_usd: Num;
+  pre_return_1h_pct: Num;
+  pre_return_4h_pct: Num;
+  entry_cost_pct: Num;
+  entry_error: string | null;
+  ret_1h_pct: Num;
+  ret_4h_pct: Num;
+  ret_12h_pct: Num;
+  ret_24h_pct: Num;
+  mfe_24h_pct: Num;
+  mae_24h_pct: Num;
+  missing: string[] | null;
+  controls: number;
+  control_ret_24h_pct: Num;
+}
+
+export interface Stat {
+  n: number;
+  mean: Num;
+  median: Num;
+  win_rate: Num;
+  se: Num;
+  ci95: [number, number] | null;
+}
+
+export interface EarlyReport {
+  model_version: string;
+  alerts: number;
+  with_controls: number;
+  horizons: Record<string, { alerts: Stat; controls: Stat; uplift: Stat }>;
+  excursions: Record<string, Record<string, Stat>>;
+  pre_alert: Record<string, Stat>;
+  entry: { checked: number; available: number; cost: Stat };
+}

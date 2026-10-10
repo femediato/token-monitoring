@@ -376,3 +376,68 @@ class WatchlistEvent(Base):
     model_version: Mapped[str] = mapped_column(String(16))
 
     __table_args__ = (Index("ix_watchlist_events_at", "at"),)
+
+
+class EarlyScore(Base):
+    """Early-detection signals for every evaluated token, every run (hypertable)."""
+
+    __tablename__ = "early_scores"
+
+    token_mint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evaluated_at: Mapped[datetime] = mapped_column(primary_key=True)
+    model_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    score: Mapped[float] = mapped_column(Double)
+    state: Mapped[str] = mapped_column(String(16))
+    signals: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    eligible: Mapped[bool] = mapped_column(Boolean)
+
+
+class EarlyAlert(Base):
+    """An early-opportunity alert: a research signal, never an order."""
+
+    __tablename__ = "early_alerts"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    token_mint: Mapped[str] = mapped_column(String(64))
+    at: Mapped[datetime]
+    model_version: Mapped[str] = mapped_column(String(16))
+    score: Mapped[float] = mapped_column(Double)
+    state: Mapped[str] = mapped_column(String(16))
+    signals: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    price_usd: Mapped[float | None] = mapped_column(Double)
+    market_cap: Mapped[float | None] = mapped_column(Double)
+    liquidity_usd: Mapped[float | None] = mapped_column(Double)
+    # How far price had already moved before the alert (was it detected *after* the move?)
+    pre_return_1h_pct: Mapped[float | None] = mapped_column(Double)
+    pre_return_4h_pct: Mapped[float | None] = mapped_column(Double)
+    # Executable $1,000 buy quote taken right after the alert.
+    entry_quoted_at: Mapped[datetime | None]
+    entry_cost_pct: Mapped[float | None] = mapped_column(Double)
+    entry_error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_early_alerts_at", "at"),
+        Index("ix_early_alerts_mint_at", "token_mint", "at"),
+    )
+
+
+class AlertObservation(Base):
+    """Forward outcome of an alerted token or one of its matched controls."""
+
+    __tablename__ = "alert_observations"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    alert_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    role: Mapped[str] = mapped_column(String(8))  # alert | control
+    token_mint: Mapped[str] = mapped_column(String(64))
+    start_at: Mapped[datetime]
+    start_price: Mapped[float | None] = mapped_column(Double)
+    match_distance: Mapped[float | None] = mapped_column(Double)
+    ret_1h_pct: Mapped[float | None] = mapped_column(Double)
+    ret_4h_pct: Mapped[float | None] = mapped_column(Double)
+    ret_12h_pct: Mapped[float | None] = mapped_column(Double)
+    ret_24h_pct: Mapped[float | None] = mapped_column(Double)
+    mfe_24h_pct: Mapped[float | None] = mapped_column(Double)  # max favourable excursion
+    mae_24h_pct: Mapped[float | None] = mapped_column(Double)  # max adverse excursion
+    missing: Mapped[list[str] | None] = mapped_column(JSONB)  # horizons with no price data
+    completed_at: Mapped[datetime | None]

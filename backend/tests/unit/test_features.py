@@ -48,6 +48,7 @@ def ctx(snaps: list[Snapshot], **kw) -> TokenContext:
         snapshots=snaps,
         depth_now=kw.get("depth_now"),
         depth_24h=kw.get("depth_24h"),
+        depth_6h=kw.get("depth_6h"),
         security=None,
         holders=None,
         quote=None,
