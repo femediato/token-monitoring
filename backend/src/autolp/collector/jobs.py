@@ -26,6 +26,7 @@ from autolp.db.models import (
     MarketWindowStats,
     Pool,
     PoolSnapshot,
+    ScoreEvaluation,
     SwapQuote,
     Token,
     TokenDiscovery,
@@ -508,10 +509,29 @@ class Collector:
         targets.sort(key=lambda t: t[2], reverse=True)
         return [(m, p) for m, p, _ in targets]
 
+    async def _eligible_first(
+        self, targets: list[tuple[str, str | None]]
+    ) -> list[tuple[str, str | None]]:
+        """Tokens eligible at any evaluation in the last 2 hours (the strategy universe)
+        first, then the rest; liquidity order within each group."""
+        async with self.factory() as session:
+            eligible = set(
+                await session.scalars(
+                    select(ScoreEvaluation.token_mint)
+                    .where(
+                        ScoreEvaluation.evaluated_at >= utcnow() - timedelta(hours=2),
+                        ScoreEvaluation.eligible.is_(True),
+                    )
+                    .distinct()
+                )
+            )
+        return sorted(targets, key=lambda t: t[0] not in eligible)
+
     async def candles(self, run_id: int) -> JobResult:
-        targets = (await self._liquid_active_tokens(self.cfg.candles_min_liquidity_usd))[
-            : self.cfg.candles_max_tokens
-        ]
+        targets = await self._eligible_first(
+            await self._liquid_active_tokens(self.cfg.candles_min_liquidity_usd)
+        )
+        targets = targets[: self.cfg.candles_max_tokens]
         result, failures = JobResult(), 0
         for mint, pool in targets:
             assert pool is not None  # require_pool=True
@@ -530,8 +550,10 @@ class Collector:
     async def backfill_candles(self, run_id: int) -> JobResult:
         """Point-in-time OHLCV history for newly tracked tokens (GeckoTerminal, 1000/page)."""
         targets = (
-            await self._liquid_active_tokens(
-                self.cfg.candles_min_liquidity_usd, Token.candles_backfilled_at.is_(None)
+            await self._eligible_first(
+                await self._liquid_active_tokens(
+                    self.cfg.candles_min_liquidity_usd, Token.candles_backfilled_at.is_(None)
+                )
             )
         )[: self.cfg.backfill_tokens_per_run]
         pages = math.ceil(self.cfg.backfill_days * 288 / 1000)

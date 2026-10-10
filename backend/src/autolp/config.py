@@ -71,8 +71,9 @@ class CollectionSettings(BaseModel):
     jupiter_batch_size: int = 100
     dexscreener_batch_size: int = 30
 
-    candles_minutes: int = 30
-    candles_max_tokens: int = 30
+    # Eligible tokens first (the strategy universe); the job takes ~10 s per token.
+    candles_minutes: int = 15
+    candles_max_tokens: int = 24
     candles_lookback: int = 8  # 5-minute candles per refresh (40 min, overlapping the cadence)
     candles_min_liquidity_usd: float = 100_000
     backfill_days: int = 14

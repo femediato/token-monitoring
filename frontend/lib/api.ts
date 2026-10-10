@@ -395,3 +395,69 @@ export interface EarlyReport {
   pre_alert: Record<string, Stat>;
   entry: { checked: number; available: number; cost: Stat };
 }
+
+export type Check = boolean | null;
+
+export interface StrategySignalRow {
+  mint: string;
+  symbol: string | null;
+  strategy: "momentum" | "pullback" | "range";
+  setup: boolean;
+  checks: Record<string, Check>;
+  failed: string[];
+  values: Record<string, number | null>;
+  last_candle_at: string | null;
+  entry_ref: Num;
+  stop: Num;
+  target: Num;
+  max_hold_hours: Num;
+  cost_pct: Num;
+}
+
+export interface StrategySignals {
+  version: string;
+  evaluated_at: string | null;
+  items: StrategySignalRow[];
+}
+
+export interface StrategySetups {
+  days: number;
+  totals: { strategy: string; evaluated: number; setups: number }[];
+  blockers: { strategy: string; check: string; n: number }[];
+  items: (Omit<StrategySignalRow, "checks" | "failed" | "setup" | "last_candle_at"> & { at: string })[];
+}
+
+interface ExitParams {
+  take_profit_pct: number;
+  stop_loss_pct: number;
+  max_hold_hours: number;
+}
+
+export interface StrategyParams {
+  version: string;
+  params: {
+    enabled: string[];
+    momentum: { min_relative_volume: number; min_buying_score: number; exit: ExitParams };
+    pullback: { ema_fast: number; ema_slow: number; high_lookback_candles: number; min_retrace_pct: number; max_retrace_pct: number; exit: ExitParams };
+    range: {
+      window_candles: number;
+      min_support_tests: number;
+      min_resistance_tests: number;
+      min_reward_risk: number;
+      stop_buffer_pct: number;
+      max_hold_hours: number;
+    };
+    risk: {
+      starting_equity_usd: number;
+      risk_per_trade_pct: number;
+      max_positions: number;
+      max_open_risk_pct: number;
+      daily_loss_stop_pct: number;
+      max_quote_age_minutes: number;
+      max_cost_pct: number;
+      quoted_size_usd: number;
+      max_liquidity_share_pct: number;
+    };
+    data: { max_candle_age_minutes: number; max_evaluation_age_minutes: number };
+  };
+}

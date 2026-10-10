@@ -441,3 +441,30 @@ class AlertObservation(Base):
     mae_24h_pct: Mapped[float | None] = mapped_column(Double)  # max adverse excursion
     missing: Mapped[list[str] | None] = mapped_column(JSONB)  # horizons with no price data
     completed_at: Mapped[datetime | None]
+
+
+class StrategySignal(Base):
+    """One strategy's entry check for one token at one live evaluation (hypertable).
+
+    Every check is stored (True / False / None = input missing), with the setup levels when
+    all checks pass. A setup is a paper decision only; it never places an order.
+    """
+
+    __tablename__ = "strategy_signals"
+
+    token_mint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evaluated_at: Mapped[datetime] = mapped_column(primary_key=True)
+    strategy: Mapped[str] = mapped_column(String(16), primary_key=True)
+    version: Mapped[str] = mapped_column(String(16))
+    setup: Mapped[bool] = mapped_column(Boolean)
+    checks: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    failed: Mapped[list[str]] = mapped_column(JSONB)
+    values: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    last_candle_at: Mapped[datetime | None]
+    entry_ref: Mapped[float | None] = mapped_column(Double)
+    stop: Mapped[float | None] = mapped_column(Double)
+    target: Mapped[float | None] = mapped_column(Double)
+    max_hold_hours: Mapped[float | None] = mapped_column(Double)
+    cost_pct: Mapped[float | None] = mapped_column(Double)
+
+    __table_args__ = (Index("ix_strategy_signals_at", "evaluated_at"),)

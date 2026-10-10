@@ -10,6 +10,7 @@ from autolp.collector.runs import JobFn
 from autolp.config import Settings
 from autolp.db.models import TrackingStatus
 from autolp.selection.engine import run_scoring
+from autolp.strategies.live import run_strategy_signals
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,10 @@ def job_specs(settings: Settings) -> list[JobSpec]:
         # Early detection (Phase 4): entry quotes right after alerts, outcomes as they mature.
         JobSpec("alert_entry_quotes", 5, 270, lambda col: col.alert_entry_quotes),
         JobSpec("alert_outcomes", 15, 290, lambda col: col.alert_outcomes),
+        # Strategies (Phase 5): after the candles job has fetched the quarter's candles.
+        JobSpec(
+            "strategy_signals", 15, 600, lambda col: partial(run_strategy_signals, col.factory)
+        ),
     ]
 
 

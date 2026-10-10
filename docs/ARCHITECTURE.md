@@ -65,7 +65,9 @@ All timestamps `timestamptz`, UTC. Hypertables marked (H).
 - `eligibility_evaluations`, `score_evaluations` (model_version, component scores, raw features jsonb), `watchlist_events` (add/remove/upgrade + reason code), `watchlist_members`.
 - `early_alerts` (signals fired, score, state, model_version), `alert_outcomes` (1h/4h/12h/24h returns, MFE, MAE, entry_feasible).
 
-**Phases 5-7**: `strategy_configs` (versioned params), `signals`, `orders`, `fills`, `positions`, `backtest_runs`.
+**Phase 5 (as built)**: `strategy_signals` (H) — every entry check per token, strategy and 15-minute run, with setup levels; parameters are versioned in code (`strategies/params.py`, `strat-v1`). See `docs/STRATEGIES.md`.
+
+**Phases 6-7**: `backtest_runs`, paper `orders`, `fills`, `positions`.
 
 ## 4. Dependencies
 
@@ -111,8 +113,8 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 | snapshots_dormant | 60 min | same, dormant tokens | same |
 | pools | 5 min | DEX Screener: primary pools by address (30/req); tokens without a known pool via the token endpoint | `pools`, `pool_snapshots` (reserves) |
 | pool_discovery | 60 min | DEX Screener token-pairs, one request per active token | `pools`, `pool_snapshots`, `tokens.primary_pool` = deepest pool (resets candle backfill when it changes) |
-| candles | 30 min | GeckoTerminal OHLCV (8 candles), top 30 active by liquidity (≥ $100K) | `candles_5m` |
-| candle_backfill | 15 min | GeckoTerminal, 14 days for 2 new tokens/run | `candles_5m` |
+| candles | 15 min | GeckoTerminal OHLCV (8 candles), 24 tokens: eligible first, then by liquidity (≥ $100K) | `candles_5m` |
+| candle_backfill | 15 min | GeckoTerminal, 14 days for 2 new tokens/run (eligible first) | `candles_5m` |
 | security | 60 min | Helius `getMultipleAccounts` (mint), refresh 24h | `token_security` |
 | holders | 60 min | Helius largest accounts + owner resolution, 25 tokens/run, refresh 24h | `holder_snapshots` |
 | quotes | 15 min | Jupiter quote, sell $1,000 → USDC, tokens with liq ≥ $150K and 24h vol ≥ $500K | `swap_quotes` |
@@ -154,3 +156,7 @@ Read-only Next.js app (`frontend/`, `localhost:3000`) over a read-only API (`/ap
 Rules: values are shown exactly as stored; missing values render as "—" and unchecked security as "Unchecked", never as safe. Colors follow the validated reference palette (dataviz skill); status badges always pair color with a label.
 
 `tracking_events` (migration 0003) records every active/dormant/excluded transition with its reason; existing tokens were seeded with a `backfill:` event.
+
+## 8. Phase 5 — trading strategies
+
+Three rule sets (momentum breakout, pullback, range), shared risk rules and a deterministic paper decision engine; specification and interpretations in `docs/STRATEGIES.md`. A `strategy_signals` collector job records every check for the eligible universe every 15 minutes (Strategies page); `make replay` replays the decision engine over stored data and prints a digest of the decisions.
