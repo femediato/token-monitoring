@@ -25,6 +25,7 @@ class ProviderSettings(BaseModel):
     requests_per_second: float = 1.0
     timeout_seconds: float = 15.0
     max_retries: int = 4
+    rate_limited_backoff_seconds: float = 15.0  # minimum wait after an HTTP 429
 
     @field_validator("api_key", mode="before")
     @classmethod
@@ -51,7 +52,47 @@ class HeliusSettings(ProviderSettings):
 
 class GeckoTerminalSettings(ProviderSettings):
     base_url: str = "https://api.geckoterminal.com/api/v2"
-    requests_per_second: float = 0.5
+    requests_per_second: float = 0.4  # free tier allows 30/min; keep headroom
+
+
+class CollectionSettings(BaseModel):
+    """Cadences, batch sizes and tracking floors for the collector (Phase 2)."""
+
+    discovery_minutes: int = 15
+    discovery_categories: list[str] = ["toptrending", "toptraded", "toporganicscore"]
+    discovery_intervals: list[str] = ["5m", "1h", "6h", "24h"]
+    discovery_limit: int = 100
+
+    snapshot_minutes: int = 5
+    dormant_snapshot_minutes: int = 60
+    jupiter_batch_size: int = 100
+    dexscreener_batch_size: int = 30
+
+    candles_minutes: int = 15
+    candles_max_tokens: int = 60
+    candles_lookback: int = 12  # 5-minute candles fetched per refresh
+    candles_min_liquidity_usd: float = 100_000
+    backfill_days: int = 14
+    backfill_tokens_per_run: int = 3
+
+    security_refresh_hours: int = 24
+    holders_refresh_hours: int = 24
+    holders_min_liquidity_usd: float = 100_000
+    holders_tokens_per_run: int = 25
+
+    quotes_minutes: int = 15
+    quote_sell_usd: float = 1_000
+    quote_min_liquidity_usd: float = 150_000
+    quote_min_volume_24h_usd: float = 500_000
+
+    # Tokens below this floor for `dormant_after_hours` are polled hourly instead of every
+    # 5 minutes. They are never deleted, so failed tokens stay in the dataset.
+    tracking_min_liquidity_usd: float = 25_000
+    tracking_min_volume_24h_usd: float = 25_000
+    dormant_after_hours: int = 24
+
+    stale_after_minutes: int = 15
+    manual_exclude_mints: list[str] = []
 
 
 class Settings(BaseSettings):
@@ -80,6 +121,7 @@ class Settings(BaseSettings):
     geckoterminal: GeckoTerminalSettings = GeckoTerminalSettings()
 
     collector_heartbeat_seconds: int = 60
+    collection: CollectionSettings = CollectionSettings()
 
 
 @lru_cache

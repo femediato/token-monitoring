@@ -5,13 +5,21 @@ import pytest
 import respx
 
 from autolp.config import ProviderSettings
-from autolp.providers.http import ProviderClient, ProviderHTTPError, ProviderResponse, RateLimiter
+from autolp.providers.http import (
+    ProviderClient,
+    ProviderHTTPError,
+    ProviderResponse,
+    ProviderTransportError,
+    RateLimiter,
+)
 
 BASE = "https://example.test"
 
 
 def make_client(**kw: object) -> ProviderClient:
-    settings = ProviderSettings(base_url=BASE, requests_per_second=1000, max_retries=3)
+    settings = ProviderSettings(
+        base_url=BASE, requests_per_second=1000, max_retries=3, rate_limited_backoff_seconds=0.01
+    )
     return ProviderClient("test", settings, max_wait_seconds=0.01, **kw)  # type: ignore[arg-type]
 
 
@@ -101,3 +109,38 @@ async def test_rate_limiter_spaces_requests() -> None:
 def test_rate_limiter_rejects_nonpositive_rate() -> None:
     with pytest.raises(ValueError):
         RateLimiter(rate=0)
+
+
+@respx.mock
+async def test_429_waits_for_retry_after() -> None:
+    respx.get(f"{BASE}/x").mock(
+        side_effect=[
+            httpx.Response(429, headers={"retry-after": "0.3"}),
+            httpx.Response(200, json=1),
+        ]
+    )
+    async with make_client() as client:
+        start = time.monotonic()
+        await client.get_json("/x")
+    assert time.monotonic() - start >= 0.3
+
+
+@respx.mock
+async def test_transport_error_message_hides_url_credentials() -> None:
+    respx.get(f"{BASE}/x").mock(
+        side_effect=httpx.ConnectError("failed for https://h?api-key=SECRET")
+    )
+    async with make_client() as client:
+        with pytest.raises(ProviderTransportError) as err:
+            await client.get_json("/x")
+    assert "SECRET" not in str(err.value)
+
+
+@respx.mock
+async def test_default_params_sent_but_not_recorded() -> None:
+    route = respx.get(f"{BASE}/x").mock(return_value=httpx.Response(200, json=[]))
+    settings = ProviderSettings(base_url=BASE, requests_per_second=1000)
+    async with ProviderClient("t", settings, default_params={"api-key": "SECRET"}) as client:
+        resp = await client.get_json("/x", {"q": "1"})
+    assert route.calls.last.request.url.params["api-key"] == "SECRET"
+    assert resp.params == {"q": "1"}

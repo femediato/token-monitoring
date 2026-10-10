@@ -99,3 +99,42 @@ Usage is minimised by batching, one shared collector + cache, slow metadata refr
 9. Tests: unit (config, retry/rate-limit with respx, logging) and integration (migrations up/down, write/read raw observation, restart persistence) against a real Timescale container.
 
 Acceptance: `make up` starts the stack; `make test` passes; `docker compose restart` preserves data.
+
+## 6. Phase 2 — as built
+
+### Jobs (collector process, wall-clock aligned, each run recorded in `collector_runs`)
+
+| Job | Every | Source | Writes |
+|---|---|---|---|
+| discovery | 15 min | Jupiter top-trending / top-traded / top-organic-score × 5m/1h/6h/24h (12 req) | `tokens`, `token_discoveries` (list + rank = inclusion reason) |
+| snapshots_active | 5 min | Jupiter Tokens V2 search, 100 mints/req | `market_snapshots`, `market_window_stats` |
+| snapshots_dormant | 60 min | same, dormant tokens | same |
+| pools | 5 min | DEX Screener, 30 mints/req | `pools`, `pool_snapshots` (reserves), `tokens.primary_pool` |
+| candles | 15 min | GeckoTerminal OHLCV, top 60 active by liquidity (≥ $100K) | `candles_5m` |
+| candle_backfill | 15 min | GeckoTerminal, 14 days for 3 new tokens/run | `candles_5m` |
+| security | 60 min | Helius `getMultipleAccounts` (mint), refresh 24h | `token_security` |
+| holders | 60 min | Helius largest accounts + owner resolution, 25 tokens/run, refresh 24h | `holder_snapshots` |
+| quotes | 15 min | Jupiter quote, sell $1,000 → USDC, tokens with liq ≥ $150K and 24h vol ≥ $500K | `swap_quotes` |
+| tracking | 60 min | — | active ↔ dormant transitions |
+
+### Data rules
+
+- Every provider response is stored verbatim in `raw_observations`; normalized rows carry `raw_observation_id` and share the response's `fetched_at` as `observed_at`.
+- Universe tiers: **active** (polled every 5 min), **dormant** (below $25K liquidity / $25K 24h volume for 24h; polled hourly), **excluded** (non-meme asset class). Nothing is deleted, so tokens that later fail stay in the dataset (no survivorship bias).
+- Classifier v1 (`autolp/universe.py`) works by exclusion because Jupiter's `meme` tag is sparse: excluded tags (stocks, RWA, stable, LST, DeFi, infra, major), excluded mints, manual list; otherwise `meme` (tag or meme launchpad) or `meme_candidate`.
+- Security: active mint/freeze authority and risky Token-2022 extensions (permanent delegate, transfer hook, transfer fee > 0, pausable, non-transferable, default-frozen, mint close authority) → `risky`. Missing/unparseable account → `unknown`, never `ok`.
+- Holders (method v1): top-20 accounts from RPC; owners resolved; owners that are program-controlled accounts (AMM vaults, bonding curves, lockers) are excluded as `program`, incinerator as `burn` (also removed from supply). Unresolvable owners are counted, so missing data never lowers concentration.
+- Candles: a candle is `is_complete` once its 5-minute bucket has closed at fetch time; complete candles are never overwritten.
+- Quotes: `slippage_pct = (notional − USDC out) / notional`, against the latest Jupiter price; failures (no route, disabled pool) are stored with the error.
+- Staleness: `market_snapshots.source_updated_at` records the provider's own update time; lag is reported by monitoring.
+
+### Monitoring
+
+- `GET /monitoring/jobs?hours=24` — per-job runs, failures, coverage, max gap, status (ok / degraded / stale / never_ran).
+- `GET /monitoring/freshness` — universe size per tier, stale active tokens, provider lag.
+- Collector self-check every 15 min logs `collection_job_unhealthy` / `collection_data_stale` warnings.
+- `make report HOURS=72` — acceptance report. PASS requires every job to have run, 5-minute jobs ≥ 95% coverage with no gap > 30 min, median per-token coverage ≥ 95%, ≤ 5% stale active tokens.
+
+### Request budget (observed in the first live run)
+
+Jupiter ≈ 12 + ~4 + ~50 requests per 15 min (discovery, snapshots, quotes) — well under 1 req/s. DEX Screener ≈ 10 req / 5 min. GeckoTerminal ≤ 24 req/min (throttled below the 30/min free limit, with 15 s+ backoff on 429). Helius ≈ 80 calls/hour ≈ 60K/month of the 1M free credits.

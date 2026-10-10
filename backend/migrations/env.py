@@ -22,8 +22,19 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def include_object(
+    obj: object, name: str | None, type_: str, reflected: bool, compare_to: object
+) -> bool:
+    # TimescaleDB creates "<table>_<time>_idx" indexes on hypertables; they are not ORM-managed.
+    return not (
+        type_ == "index" and reflected and compare_to is None and (name or "").endswith("_idx")
+    )
+
+
 def _do_run(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection, target_metadata=target_metadata, include_object=include_object
+    )
     with context.begin_transaction():
         context.run_migrations()
 

@@ -65,19 +65,43 @@ class ProviderResponse:
         return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-class ProviderHTTPError(Exception):
-    def __init__(self, source: str, endpoint: str, status_code: int, body: str) -> None:
+class ProviderError(Exception):
+    """Base class for provider failures. Messages never contain credentials."""
+
+
+class ProviderHTTPError(ProviderError):
+    def __init__(
+        self,
+        source: str,
+        endpoint: str,
+        status_code: int,
+        body: str,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(f"{source} {endpoint} -> HTTP {status_code}: {body[:200]}")
         self.status_code = status_code
+        self.body = body
+        self.retry_after = retry_after
+
+
+class ProviderTransportError(ProviderError):
+    """Network-level failure. Wraps httpx errors, whose messages may include the full URL."""
 
 
 ResponseSink = Callable[[ProviderResponse], Awaitable[None]]
 
 
+def _retry_after_seconds(resp: httpx.Response) -> float | None:
+    try:
+        return float(resp.headers["retry-after"])
+    except (KeyError, ValueError):
+        return None
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, ProviderHTTPError):
         return exc.status_code in RETRYABLE_STATUS
-    return isinstance(exc, httpx.TransportError)
+    return isinstance(exc, ProviderTransportError)
 
 
 class ProviderClient:
@@ -93,6 +117,7 @@ class ProviderClient:
         settings: ProviderSettings,
         *,
         headers: dict[str, str] | None = None,
+        default_params: dict[str, str] | None = None,
         sink: ResponseSink | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         max_wait_seconds: float = 30.0,
@@ -106,6 +131,7 @@ class ProviderClient:
             base_url=settings.base_url,
             timeout=settings.timeout_seconds,
             headers=headers,
+            params=default_params,  # e.g. API keys in the URL; never recorded in observations
             transport=transport,
         )
 
@@ -117,6 +143,16 @@ class ProviderClient:
 
     async def aclose(self) -> None:
         await self._client.aclose()
+
+    def _wait(self, state: RetryCallState) -> float:
+        """Exponential backoff with jitter; rate-limit responses wait at least the
+        provider's Retry-After or the configured minimum, so the window can reset."""
+        base = wait_random_exponential(multiplier=0.5, max=self.max_wait_seconds)(state)
+        exc = state.outcome.exception() if state.outcome else None
+        if isinstance(exc, ProviderHTTPError) and exc.status_code == 429:
+            floor = exc.retry_after or self.settings.rate_limited_backoff_seconds
+            return max(base, min(floor, 120.0))
+        return base
 
     def _log_retry(self, state: RetryCallState) -> None:
         exc = state.outcome.exception() if state.outcome else None
@@ -135,15 +171,28 @@ class ProviderClient:
         async for attempt in AsyncRetrying(
             retry=retry_if_exception(_is_retryable),
             stop=stop_after_attempt(self.settings.max_retries + 1),
-            wait=wait_random_exponential(multiplier=0.5, max=self.max_wait_seconds),
+            wait=self._wait,
             before_sleep=self._log_retry,
             reraise=True,
         ):
             with attempt:
                 await self.limiter.acquire()
-                resp = await self._client.request(method, endpoint, params=params, json=json_body)
+                try:
+                    resp = await self._client.request(
+                        method, endpoint, params=params, json=json_body
+                    )
+                except httpx.TransportError as exc:
+                    raise ProviderTransportError(
+                        f"{self.source} {endpoint}: {type(exc).__name__}"
+                    ) from None
                 if resp.status_code >= 400:
-                    raise ProviderHTTPError(self.source, endpoint, resp.status_code, resp.text)
+                    raise ProviderHTTPError(
+                        self.source,
+                        endpoint,
+                        resp.status_code,
+                        resp.text,
+                        _retry_after_seconds(resp),
+                    )
                 result = ProviderResponse(
                     source=self.source,
                     endpoint=endpoint,
@@ -155,6 +204,9 @@ class ProviderClient:
         if self.sink is not None:
             await self.sink(result)
         return result
+
+    async def post_json(self, endpoint: str, json_body: Any) -> ProviderResponse:
+        return await self.request_json("POST", endpoint, json_body=json_body)
 
     async def get_json(
         self, endpoint: str, params: dict[str, Any] | None = None

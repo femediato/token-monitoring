@@ -1,0 +1,70 @@
+{
+ "contextSlot": 455301931,
+ "inAmount": "10000000000",
+ "inputMint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+ "instructionVersion": null,
+ "loadedLongtailToken": false,
+ "longtailMarketQuoteReport": null,
+ "mostReliableAmmsQuoteReport": {
+  "info": {
+   "8B8KYcFPMjZyDtJ1BENsqhW3fEmMrB4ekoEQJiM6z3SC": "340310",
+   "BCDdHonby65iduz3Ev3c9v5XjNkzyu5e56KRFHpBM4T9": "339098",
+   "BZtgQEyS6eXUXicYPHecYQ7PybqodXQMvkjUbP4R8mUU": "340439",
+   "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE": "340270"
+  }
+ },
+ "otherAmountThreshold": "330249",
+ "otherRoutePlans": null,
+ "outAmount": "340462",
+ "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+ "platformFee": null,
+ "priceImpactPct": "0.0007608513649337882608386111",
+ "routePlan": [
+  {
+   "bps": null,
+   "percent": 100,
+   "swapInfo": {
+    "ammKey": "954xhUdxro5gewS9TG385HtgWu5dwZMGfQ9JAUEz33Ux",
+    "inAmount": "10000000000",
+    "inputMint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "label": "Bonkswap",
+    "outAmount": "340735",
+    "outputMint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
+    "updateContextSlot": "455300991"
+   }
+  },
+  {
+   "bps": null,
+   "percent": 100,
+   "swapInfo": {
+    "ammKey": "6b5LxeDVxqCGAhZjjjgieGP71c5GBt2cBwiafCFX6NMU",
+    "inAmount": "340735",
+    "inputMint": "USD1ttGY1N17NEEHLmELoaybftRBUSErhqYiQzvEmuB",
+    "label": "BisonFi",
+    "outAmount": "3085670",
+    "outputMint": "So11111111111111111111111111111111111111112",
+    "updateContextSlot": "455301931"
+   }
+  },
+  {
+   "bps": null,
+   "percent": 100,
+   "swapInfo": {
+    "ammKey": "7yD7gfXv49SFxhx9uTc11dEd7Nj98rGWeYMdZJgheZbG",
+    "inAmount": "3085670",
+    "inputMint": "So11111111111111111111111111111111111111112",
+    "label": "Kipseli",
+    "outAmount": "340462",
+    "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "updateContextSlot": "455301930"
+   }
+  }
+ ],
+ "slippageBps": 300,
+ "swapMode": "ExactIn",
+ "swapUsdValue": "0.340357218981389822658",
+ "timeTaken": 0.004605413,
+ "transactionVersion": 0,
+ "useIncurredSlippageForQuoting": null,
+ "useRewards": null
+}

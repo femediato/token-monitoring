@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from autolp.config import Settings
+from autolp.db.models import Base
 from autolp.db.session import make_engine, make_sessionmaker
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -41,5 +42,6 @@ async def engine(settings: Settings) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 async def factory(engine: AsyncEngine) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE collector_runs, raw_observations, tokens"))
+        tables = ", ".join(Base.metadata.tables)
+        await conn.execute(text(f"TRUNCATE {tables}"))
     yield make_sessionmaker(engine)

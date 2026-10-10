@@ -25,6 +25,7 @@ make test                 # unit + integration (integration uses the autolp_test
 | `make test-unit` | Unit tests, no services needed |
 | `make test-integration` | Integration tests against TimescaleDB (`make up` first) |
 | `make lint` / `make fmt` | ruff + mypy / auto-format |
+| `make report HOURS=72` | Collection acceptance report (coverage, gaps, staleness) |
 
 ## Services
 
@@ -32,8 +33,8 @@ make test                 # unit + integration (integration uses the autolp_test
 |---|---|
 | `db` | PostgreSQL 16 + TimescaleDB; `autolp_<env>` plus `autolp_test` |
 | `migrate` | One-shot `alembic upgrade head` before app services start |
-| `api` | FastAPI: `/health` (liveness), `/health/ready` (DB + migrations at head) |
-| `collector` | Scheduled data collection; records every run in `collector_runs` |
+| `api` | FastAPI: `/health`, `/health/ready`, `/monitoring/jobs`, `/monitoring/freshness` |
+| `collector` | Scheduled collection from Jupiter, DEX Screener, GeckoTerminal, Helius; every run recorded in `collector_runs` |
 
 ## Conventions
 

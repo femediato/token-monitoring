@@ -95,5 +95,7 @@ async def test_migrations_downgrade_and_reupgrade(engine: AsyncEngine) -> None:
     async with engine.connect() as conn:
         assert await conn.scalar(text("SELECT to_regclass('raw_observations')")) is None
     alembic("upgrade", "head")
+    # Enum types were recreated with new OIDs; drop pooled connections that cached the old ones.
+    await engine.dispose()
     async with engine.connect() as conn:
         assert await conn.scalar(text("SELECT to_regclass('raw_observations')")) is not None
