@@ -8,11 +8,12 @@ from typing import Any
 
 from autolp.config import HeliusSettings
 from autolp.providers.http import ProviderClient, ProviderError, ProviderResponse
+from autolp.providers.solana_keys import is_pda
 
 SOURCE = "helius"
 SYSTEM_PROGRAM = "11111111111111111111111111111111"
 INCINERATOR = "1nc1nerator11111111111111111111111111111111"
-HOLDER_METHOD_VERSION = "v1"
+HOLDER_METHOD_VERSION = "v2"
 
 
 class RpcError(ProviderError):
@@ -100,10 +101,11 @@ def parse_mint_account(mint: str, account: dict[str, Any] | None) -> MintSecurit
 @dataclass(frozen=True)
 class HolderAnalysis:
     supply_ui: float
-    top10_pct_raw: float
-    top10_pct_adjusted: float
+    top10_pct_raw: float  # top-10 token accounts, no exclusions
+    top10_pct_adjusted: float  # top-10 owners after exclusions, of supply minus burns
+    top1_pct_adjusted: float  # largest owner after exclusions
     excluded_pct: float
-    accounts: list[dict[str, Any]]
+    accounts: list[dict[str, Any]]  # one entry per owner (token accounts aggregated)
 
 
 def analyze_holders(
@@ -112,50 +114,64 @@ def analyze_holders(
     owner_programs: dict[str, str | None],
     supply_raw: int,
     decimals: int,
+    infrastructure: dict[str, str] | None = None,
 ) -> HolderAnalysis:
-    """Top-10 concentration with documented exclusions (method v1).
+    """Holder concentration with documented exclusions (method v2).
 
-    Excluded from the adjusted figure:
-      * burn      - tokens held by the incinerator (also removed from the denominator)
-      * program   - owner is a program-controlled account (AMM vault, bonding curve,
-                    locker); detected because the owner account is not System-owned
-    Unresolvable owners are *counted* as holders, so missing data never lowers concentration.
-    Only the 20 largest accounts are available from RPC.
+    Token accounts are aggregated by owner. Owners are excluded when they are:
+      * burn            - the incinerator (also removed from the denominator)
+      * program         - off the ed25519 curve (a PDA: AMM vault authority, multisig,
+                          locker, bonding curve) or an account owned by a non-System program
+      * infrastructure  - listed in the curated infrastructure-wallet file (exchanges,
+                          custodians), with the label recorded
+    Unresolvable owners are counted as holders (keyed by token account), so missing data
+    never lowers concentration. Only the 20 largest token accounts are available from RPC.
     """
     if supply_raw <= 0:
         raise ValueError("supply must be positive")
-    accounts = []
+    infrastructure = infrastructure or {}
+    owners: dict[str, dict[str, Any]] = {}
     for acc in largest:
         address, amount = acc["address"], int(acc["amount"])
         owner = token_account_owners.get(address)
-        program = owner_programs.get(owner) if owner else None
+        key = owner or address
+        entry = owners.setdefault(
+            key,
+            {
+                "owner": owner,
+                "owner_program": owner_programs.get(owner) if owner else None,
+                "off_curve": is_pda(owner) if owner else None,
+                "token_accounts": [],
+                "amount_raw": 0,
+            },
+        )
+        entry["token_accounts"].append(address)
+        entry["amount_raw"] += amount
+    rows = []
+    for e in owners.values():
+        owner, program = e["owner"], e["owner_program"]
         if owner == INCINERATOR:
             reason = "burn"
-        elif owner is not None and program not in (None, SYSTEM_PROGRAM):
+        elif owner in infrastructure:
+            reason = f"infrastructure:{infrastructure[owner]}"
+        elif owner is not None and (e["off_curve"] or program not in (None, SYSTEM_PROGRAM)):
             reason = "program"
         else:
             reason = None
-        accounts.append(
-            {
-                "account": address,
-                "owner": owner,
-                "owner_program": program,
-                "amount_raw": amount,
-                "pct_of_supply": amount / supply_raw * 100,
-                "excluded": reason,
-            }
-        )
-    accounts.sort(key=lambda a: a["amount_raw"], reverse=True)
-    burned = sum(a["amount_raw"] for a in accounts if a["excluded"] == "burn")
-    excluded = sum(a["amount_raw"] for a in accounts if a["excluded"])
-    counted = [a["amount_raw"] for a in accounts if not a["excluded"]][:10]
+        rows.append({**e, "pct_of_supply": e["amount_raw"] / supply_raw * 100, "excluded": reason})
+    rows.sort(key=lambda a: a["amount_raw"], reverse=True)
+    burned = sum(a["amount_raw"] for a in rows if a["excluded"] == "burn")
+    excluded = sum(a["amount_raw"] for a in rows if a["excluded"])
+    counted = [a["amount_raw"] for a in rows if not a["excluded"]]
     effective_supply = max(supply_raw - burned, 1)
+    raw_top10 = sorted((int(a["amount"]) for a in largest), reverse=True)[:10]
     return HolderAnalysis(
         supply_ui=supply_raw / 10**decimals,
-        top10_pct_raw=sum(a["amount_raw"] for a in accounts[:10]) / supply_raw * 100,
-        top10_pct_adjusted=sum(counted) / effective_supply * 100,
+        top10_pct_raw=sum(raw_top10) / supply_raw * 100,
+        top10_pct_adjusted=sum(counted[:10]) / effective_supply * 100,
+        top1_pct_adjusted=(counted[0] / effective_supply * 100) if counted else 0.0,
         excluded_pct=excluded / supply_raw * 100,
-        accounts=accounts,
+        accounts=rows,
     )
 
 

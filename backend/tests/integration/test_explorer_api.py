@@ -105,7 +105,7 @@ async def seeded(factory: Factory) -> None:
         )
         s.add(
             SwapQuote(
-                token_mint="MintA", quoted_at=now, side="sell", notional_usd=1000, slippage_pct=0.8
+                token_mint="MintA", quoted_at=now, side="sell", notional_usd=1000, cost_pct=0.8
             )
         )
 
@@ -126,7 +126,7 @@ def test_list_defaults_to_active_sorted_by_liquidity(client: TestClient) -> None
     assert a["buy_share_24h"] == pytest.approx(60.0)
     assert a["trades_24h"] == 50 and a["traders_24h"] == 25
     assert a["security_status"] == "risky" and a["top10_pct_adjusted"] == 33.3
-    assert a["sell_slippage_pct"] == 0.8
+    assert a["sell_cost_pct"] == 0.8
     assert b["security_status"] is None  # never checked -> null, not "ok"
     assert 9.9 < a["age_days"] < 10.1
 

@@ -9,6 +9,7 @@ from autolp.collector.jobs import Collector
 from autolp.collector.runs import JobFn
 from autolp.config import Settings
 from autolp.db.models import TrackingStatus
+from autolp.selection.engine import run_scoring
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,8 @@ def job_specs(settings: Settings) -> list[JobSpec]:
         JobSpec("holders", 60, 190, lambda col: col.holders),
         JobSpec("candle_backfill", 15, 220, lambda col: col.backfill_candles),
         JobSpec("tracking", 60, 280, lambda col: col.update_tracking),
+        # Selection (Phase 3): reads stored data only, never calls providers.
+        JobSpec("scoring", 15, 240, lambda col: partial(run_scoring, col.factory)),
     ]
 
 

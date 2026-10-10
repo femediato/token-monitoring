@@ -154,6 +154,7 @@ class MarketSnapshot(Base):
     total_supply: Mapped[float | None] = mapped_column(Double)
     holder_count: Mapped[int | None] = mapped_column(BigInteger)
     organic_score: Mapped[float | None] = mapped_column(Double)
+    organic_score_label: Mapped[str | None] = mapped_column(String(16))
     mint_authority_disabled: Mapped[bool | None] = mapped_column(Boolean)
     freeze_authority_disabled: Mapped[bool | None] = mapped_column(Boolean)
     top_holders_pct: Mapped[float | None] = mapped_column(Double)
@@ -279,6 +280,7 @@ class HolderSnapshot(Base):
     supply_ui: Mapped[float | None] = mapped_column(Double)
     top10_pct_raw: Mapped[float | None] = mapped_column(Double)
     top10_pct_adjusted: Mapped[float | None] = mapped_column(Double)
+    top1_pct_adjusted: Mapped[float | None] = mapped_column(Double)
     excluded_pct: Mapped[float | None] = mapped_column(Double)
     accounts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
@@ -302,9 +304,75 @@ class SwapQuote(Base):
     out_amount_raw: Mapped[int | None] = mapped_column(Numeric(40, 0))
     out_usd: Mapped[float | None] = mapped_column(Double)
     slippage_pct: Mapped[float | None] = mapped_column(Double)
+    # Paired reference quote taken at the same moment for a small notional; execution cost
+    # is measured against it, so a stale reference price cannot distort the result.
+    ref_notional_usd: Mapped[float | None] = mapped_column(Double)
+    ref_out_usd: Mapped[float | None] = mapped_column(Double)
+    cost_pct: Mapped[float | None] = mapped_column(Double)
     price_impact_pct: Mapped[float | None] = mapped_column(Double)
     route_labels: Mapped[list[str] | None] = mapped_column(JSONB)
     context_slot: Mapped[int | None] = mapped_column(BigInteger)
     error: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_swap_quotes_mint_quoted", "token_mint", "quoted_at"),)
+
+
+class ScoreEvaluation(Base):
+    """Point-in-time eligibility, features and scores for one token (hypertable).
+
+    Every active token is evaluated; ineligible tokens carry reason codes and no scores.
+    `features` holds the raw inputs so every score can be recomputed and audited.
+    """
+
+    __tablename__ = "score_evaluations"
+
+    token_mint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evaluated_at: Mapped[datetime] = mapped_column(primary_key=True)
+    model_version: Mapped[str] = mapped_column(String(16), primary_key=True)
+    hourly: Mapped[bool] = mapped_column(Boolean)
+    eligible: Mapped[bool] = mapped_column(Boolean)
+    critical: Mapped[bool] = mapped_column(Boolean)  # failed a critical safety check
+    reasons: Mapped[list[str]] = mapped_column(JSONB)
+    features: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    components: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    activity: Mapped[float | None] = mapped_column(Double)
+    momentum: Mapped[float | None] = mapped_column(Double)
+    liquidity: Mapped[float | None] = mapped_column(Double)
+    buying: Mapped[float | None] = mapped_column(Double)
+    risk: Mapped[float | None] = mapped_column(Double)
+    total: Mapped[float | None] = mapped_column(Double)
+    coverage: Mapped[float | None] = mapped_column(Double)  # share of total weight with data
+    group: Mapped[str | None] = mapped_column(String(16))
+    rank: Mapped[int | None] = mapped_column(SmallInteger)
+
+    __table_args__ = (Index("ix_score_evaluations_at", "evaluated_at"),)
+
+
+class WatchlistMember(Base):
+    """Current watchlist membership (history lives in watchlist_events)."""
+
+    __tablename__ = "watchlist_members"
+
+    token_mint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    group: Mapped[str] = mapped_column(String(16))
+    joined_at: Mapped[datetime]
+    entry_score: Mapped[float] = mapped_column(Double)
+    model_version: Mapped[str] = mapped_column(String(16))
+
+
+class WatchlistEvent(Base):
+    """Every watchlist inclusion and removal with its reason code."""
+
+    __tablename__ = "watchlist_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    at: Mapped[datetime]
+    token_mint: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(8))  # add | remove
+    group: Mapped[str | None] = mapped_column(String(16))
+    reason: Mapped[str] = mapped_column(String(128))
+    score: Mapped[float | None] = mapped_column(Double)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    model_version: Mapped[str] = mapped_column(String(16))
+
+    __table_args__ = (Index("ix_watchlist_events_at", "at"),)

@@ -56,6 +56,7 @@ class JupiterToken:
     total_supply: float | None
     holder_count: int | None
     organic_score: float | None
+    organic_score_label: str | None
     mint_authority_disabled: bool | None
     freeze_authority_disabled: bool | None
     top_holders_pct: float | None
@@ -105,6 +106,7 @@ def parse_token(d: dict[str, Any]) -> JupiterToken:
         total_supply=as_float(d.get("totalSupply")),
         holder_count=as_int(d.get("holderCount")),
         organic_score=as_float(d.get("organicScore")),
+        organic_score_label=d.get("organicScoreLabel"),
         mint_authority_disabled=_bool(audit.get("mintAuthorityDisabled")),
         freeze_authority_disabled=_bool(audit.get("freezeAuthorityDisabled")),
         top_holders_pct=as_float(audit.get("topHoldersPercentage")),

@@ -92,12 +92,13 @@ def test_holder_exclusions() -> None:
     programs = {"amm_pda": "AMMProgram111", "wallet1": SYSTEM_PROGRAM, INCINERATOR: None}
     a = analyze_holders(largest, owners, programs, supply_raw=1000, decimals=0)
 
-    reasons = {x["account"]: x["excluded"] for x in a.accounts}
-    assert reasons["pool_vault"] == "program" and reasons["burn_acc"] == "burn"
-    assert reasons["whale"] is None and reasons["unresolved"] is None  # counted, not excluded
+    reasons = {x["owner"] or x["token_accounts"][0]: x["excluded"] for x in a.accounts}
+    assert reasons["amm_pda"] == "program" and reasons[INCINERATOR] == "burn"
+    assert reasons["wallet1"] is None and reasons["unresolved"] is None  # counted, not excluded
     assert a.top10_pct_raw == pytest.approx((300 + 200 + 100 + 50 + 6 * 10) / 10)
     # Adjusted: whale + unresolved + 8 small wallets over supply minus burn (800).
     assert a.top10_pct_adjusted == pytest.approx((100 + 50 + 80) / 800 * 100)
+    assert a.top1_pct_adjusted == pytest.approx(100 / 800 * 100)
     assert a.excluded_pct == pytest.approx(50.0)
 
 

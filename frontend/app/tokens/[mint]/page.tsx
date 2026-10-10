@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use, useMemo, useState } from "react";
+import ScoreCard from "@/components/ScoreCard";
 import TimeChart, { toPoints, type SeriesSpec } from "@/components/TimeChart";
 import { ErrorNotice, Seg, SecurityBadge, Tile, TrackingBadge } from "@/components/ui";
 import { useApi, type Candle, type Quote, type SeriesPoint, type TokenDetail } from "@/lib/api";
@@ -81,12 +82,14 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
         <Tile label="Volume 24h" value={usd(t.volume_24h)} hint={`${pct(t.buy_share_24h, 0)} buys`} />
         <Tile label="Traders 24h" value={compactNum(t.traders_24h)} hint={`${compactNum(t.trades_24h)} trades`} />
         <Tile label="Holders" value={compactNum(t.holder_count)} hint={`Top-10 ${pct(t.top10_pct_adjusted, 1)}`} />
-        <Tile label="Sell $1k slippage" value={t.quote_error ? "failed" : pct(t.sell_slippage_pct, 2)} />
+        <Tile label="Sell $1k cost" value={t.quote_error ? "failed" : pct(t.sell_cost_pct, 2)} hint="vs. $10 quote, same moment" />
         <Tile label="Age" value={days(t.age_days)} hint={`Tracked since ${ago(t.first_seen_at)}`} />
       </div>
       <p className="muted small" style={{ marginTop: -6 }}>
         Snapshot {ago(t.observed_at)} · provider updated {ago(t.source_updated_at)} · class {t.classification} ({t.classification_reason})
       </p>
+
+      <ScoreCard mint={mint} />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="chart-head">
@@ -233,16 +236,15 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
           <>
             <p className="muted small" style={{ marginTop: 0 }}>
               Top-10 adjusted {pct(d.holders.top10_pct_adjusted, 2)} (raw {pct(d.holders.top10_pct_raw, 2)}) · excluded{" "}
-              {pct(d.holders.excluded_pct, 2)} of supply · method {d.holders.method_version} · {utc(d.holders.observed_at)}. Program-owned
-              accounts (pools, bonding curves, lockers) and burns are excluded; unresolved owners are counted.
+              {pct(d.holders.excluded_pct, 2)} of supply · method {d.holders.method_version} · {utc(d.holders.observed_at)}. Accounts are grouped by owner. Program-controlled owners (pool vaults, bonding curves, lockers, multisigs), burns and listed exchange wallets are excluded; unresolved owners are counted.
             </p>
             <div className="table-wrap" style={{ border: 0 }}>
               <table>
                 <thead>
                   <tr>
                     <th>#</th>
-                    <th>Token account</th>
                     <th>Owner</th>
+                    <th className="num">Accounts</th>
                     <th>Owner program</th>
                     <th className="num">% of supply</th>
                     <th>Counted</th>
@@ -250,10 +252,10 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
                 </thead>
                 <tbody>
                   {d.holders.accounts.map((a, i) => (
-                    <tr key={a.account}>
+                    <tr key={a.owner ?? a.token_accounts?.[0] ?? i}>
                       <td className="muted">{i + 1}</td>
-                      <td className="mono">{short(a.account, 6)}</td>
-                      <td className="mono">{short(a.owner, 6)}</td>
+                      <td className="mono">{a.owner ? short(a.owner, 6) : `unresolved (${short(a.token_accounts?.[0], 6)})`}</td>
+                      <td className="num">{a.token_accounts?.length ?? 1}</td>
                       <td className="mono muted">{a.owner_program ? short(a.owner_program, 6) : DASH}</td>
                       <td className="num">{pct(a.pct_of_supply, 2)}</td>
                       <td>{a.excluded ? <span className="tag">excluded: {a.excluded}</span> : "yes"}</td>
@@ -277,7 +279,7 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
                 <tr>
                   <th>Time</th>
                   <th className="num">Out (USDC)</th>
-                  <th className="num">Slippage</th>
+                  <th className="num" title="Cost vs. a $10 quote taken at the same moment">Cost</th>
                   <th className="num">Impact</th>
                   <th>Route</th>
                 </tr>
@@ -291,7 +293,7 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
                     ) : (
                       <>
                         <td className="num">{q.out_usd?.toFixed(2) ?? DASH}</td>
-                        <td className="num">{pct(q.slippage_pct, 2)}</td>
+                        <td className="num">{pct(q.cost_pct, 2)}</td>
                         <td className="num">{pct(q.price_impact_pct, 3)}</td>
                         <td className="small">{q.route_labels?.join(" → ")}</td>
                       </>

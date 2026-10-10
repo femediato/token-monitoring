@@ -80,11 +80,13 @@ class CollectionSettings(BaseModel):
 
     security_refresh_hours: int = 24
     holders_refresh_hours: int = 24
+    holders_priority_refresh_hours: int = 6  # tokens meeting the market eligibility rules
     holders_min_liquidity_usd: float = 100_000
-    holders_tokens_per_run: int = 25
+    holders_tokens_per_run: int = 40
 
     quotes_minutes: int = 15
     quote_sell_usd: float = 1_000
+    quote_reference_usd: float = 10  # paired small quote: the price reference for cost
     quote_min_liquidity_usd: float = 150_000
     quote_min_volume_24h_usd: float = 500_000
 

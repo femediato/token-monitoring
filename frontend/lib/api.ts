@@ -60,7 +60,7 @@ export interface TokenRow {
   security_status: "ok" | "risky" | "unknown" | null;
   risk_flags: string[] | null;
   top10_pct_adjusted: Num;
-  sell_slippage_pct: Num;
+  sell_cost_pct: Num;
   quote_error: string | null;
 }
 
@@ -107,12 +107,14 @@ export interface PoolRow {
 }
 
 export interface HolderAccount {
-  account: string;
+  account?: string; // method v1
+  token_accounts?: string[]; // method v2: accounts aggregated by owner
+  off_curve?: boolean | null;
   owner: string | null;
   owner_program: string | null;
   amount_raw: string;
   pct_of_supply: number;
-  excluded: "burn" | "program" | null;
+  excluded: string | null;
 }
 
 export interface TokenDetail {
@@ -187,6 +189,7 @@ export interface Quote {
   ref_price_usd: Num;
   out_usd: Num;
   slippage_pct: Num;
+  cost_pct: Num;
   price_impact_pct: Num;
   route_labels: string[] | null;
   error: string | null;
@@ -222,4 +225,108 @@ export interface Overview {
     source_lag_max_minutes: Num;
     stale_source_values: number;
   };
+}
+
+export interface Categories {
+  activity: Num;
+  momentum: Num;
+  liquidity: Num;
+  buying: Num;
+  risk: Num;
+}
+
+export interface WatchlistMemberRow extends Categories {
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  group: string;
+  joined_at: string;
+  entry_score: number;
+  total: Num;
+  coverage: Num;
+  eligible: boolean | null;
+  reasons: string[] | null;
+  rank: Num;
+  hourly_total: Num;
+  prev_hourly_total: Num;
+  price_usd: Num;
+  market_cap: Num;
+  liquidity_usd: Num;
+  volume_24h: Num;
+}
+
+export interface Watchlist {
+  model_version: string;
+  evaluated_at: string | null;
+  hourly_evaluated_at: string | null;
+  size: number;
+  entry_score: number;
+  retain_score: number;
+  members: WatchlistMemberRow[];
+}
+
+export interface WatchlistEventRow {
+  at: string;
+  mint: string;
+  symbol: string | null;
+  action: "add" | "remove";
+  group: string | null;
+  reason: string;
+  score: Num;
+}
+
+export interface EvaluationRow extends Categories {
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  eligible: boolean;
+  critical: boolean;
+  reasons: string[];
+  total: Num;
+  coverage: Num;
+  group: string | null;
+  rank: Num;
+  market_cap: Num;
+  liquidity_usd: Num;
+  volume_24h: Num;
+  member: boolean;
+}
+
+export interface Evaluations {
+  evaluated_at: string | null;
+  counts: { evaluated?: number; eligible?: number; critical?: number; above_entry?: number };
+  reasons: { reason: string; n: number }[];
+  items: EvaluationRow[];
+}
+
+export interface TokenScores {
+  model_version: string;
+  latest:
+    | (Categories & {
+        evaluated_at: string;
+        eligible: boolean;
+        critical: boolean;
+        reasons: string[];
+        features: Record<string, unknown>;
+        components: Record<string, Record<string, number | null>> | null;
+        total: Num;
+        coverage: Num;
+        group: string | null;
+        rank: Num;
+      })
+    | null;
+  history: (Categories & { t: string; eligible: boolean; total: Num; coverage: Num; rank: Num; hourly: boolean })[];
+  watchlist_events: { at: string; action: string; group: string | null; reason: string; score: Num }[];
+}
+
+export interface ModelInfo {
+  version: string;
+  category_weights: Record<string, number>;
+  components: Record<string, { name: string; weight: number }[]>;
+  reason_codes: Record<string, string>;
+}
+
+export interface InfraCandidates {
+  tokens_analysed: number;
+  candidates: { owner: string; tokens: number; avg_pct: number; max_pct: number; excluded: boolean }[];
 }

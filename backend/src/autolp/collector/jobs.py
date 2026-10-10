@@ -40,6 +40,8 @@ from autolp.providers.geckoterminal import GeckoTerminalClient
 from autolp.providers.helius import HeliusClient
 from autolp.providers.http import ProviderError, ProviderResponse
 from autolp.providers.jupiter import JupiterClient
+from autolp.reference import infrastructure_wallets
+from autolp.selection.params import ELIGIBILITY
 from autolp.universe import classify
 
 log = get_logger(__name__)
@@ -296,6 +298,7 @@ class Collector:
                 "total_supply": t.total_supply,
                 "holder_count": t.holder_count,
                 "organic_score": t.organic_score,
+                "organic_score_label": t.organic_score_label,
                 "mint_authority_disabled": t.mint_authority_disabled,
                 "freeze_authority_disabled": t.freeze_authority_disabled,
                 "top_holders_pct": t.top_holders_pct,
@@ -662,16 +665,52 @@ class Collector:
     # ------------------------------------------------------------------ holders
 
     async def holders(self, run_id: int) -> JobResult:
-        cutoff = utcnow() - timedelta(hours=self.cfg.holders_refresh_hours)
-        recent = select(HolderSnapshot.token_mint).where(
-            HolderSnapshot.observed_at >= cutoff, HolderSnapshot.error.is_(None)
-        )
-        targets = (
-            await self._liquid_active_tokens(
-                self.cfg.holders_min_liquidity_usd, Token.mint.not_in(recent), require_pool=False
+        """Holder analysis, prioritised: tokens that meet the market eligibility rules are
+        refreshed every `holders_priority_refresh_hours`, others every
+        `holders_refresh_hours`. Only the current method version counts as fresh."""
+        now = utcnow()
+        el = ELIGIBILITY
+        async with self.factory() as session:
+            latest = await latest_jupiter_snapshots(
+                session, now - timedelta(minutes=self.cfg.stale_after_minutes)
             )
-        )[: self.cfg.holders_tokens_per_run]
+            last_ok = dict(
+                (
+                    await session.execute(
+                        select(HolderSnapshot.token_mint, func.max(HolderSnapshot.observed_at))
+                        .where(
+                            HolderSnapshot.error.is_(None),
+                            HolderSnapshot.method_version == helius.HOLDER_METHOD_VERSION,
+                        )
+                        .group_by(HolderSnapshot.token_mint)
+                    )
+                ).all()
+            )
+            active = set(
+                await session.scalars(
+                    select(Token.mint).where(Token.tracking_status == TrackingStatus.ACTIVE)
+                )
+            )
+        due: list[tuple[int, float, str]] = []
+        for mint, market in latest.items():
+            liq = market.liquidity_usd or 0
+            if mint not in active or liq < self.cfg.holders_min_liquidity_usd:
+                continue
+            priority = (
+                liq >= el.min_liquidity_usd
+                and (market.volume_24h_usd or 0) >= el.min_volume_24h_usd
+            )
+            refresh = timedelta(
+                hours=self.cfg.holders_priority_refresh_hours
+                if priority
+                else self.cfg.holders_refresh_hours
+            )
+            seen = last_ok.get(mint)
+            if seen is None or now - seen >= refresh:
+                due.append((0 if priority else 1, -liq, mint))
+        targets = [(m, None) for _, _, m in sorted(due)[: self.cfg.holders_tokens_per_run]]
         result, failures = JobResult(), 0
+        snap: HolderSnapshot
         for mint, _pool in targets:
             try:
                 snap, calls = await self._holder_snapshot(run_id, mint)
@@ -714,7 +753,7 @@ class Collector:
             for o, acc in zip(owners, helius.rpc_result(owners_resp)["value"], strict=True)
         }
         analysis = helius.analyze_holders(
-            largest, ta_owner, owner_program, sec.supply_raw, sec.decimals
+            largest, ta_owner, owner_program, sec.supply_raw, sec.decimals, infrastructure_wallets()
         )
         async with self.factory() as session, session.begin():
             for resp in (largest_resp, accounts_resp, owners_resp):
@@ -726,6 +765,7 @@ class Collector:
             supply_ui=analysis.supply_ui,
             top10_pct_raw=analysis.top10_pct_raw,
             top10_pct_adjusted=analysis.top10_pct_adjusted,
+            top1_pct_adjusted=analysis.top1_pct_adjusted,
             excluded_pct=analysis.excluded_pct,
             accounts=analysis.accounts,
         )
@@ -754,10 +794,12 @@ class Collector:
             and (s.volume_24h_usd or 0) >= self.cfg.quote_min_volume_24h_usd
         ]
         result, failures = JobResult(), 0
-        notional = self.cfg.quote_sell_usd
+        notional, ref_notional = self.cfg.quote_sell_usd, self.cfg.quote_reference_usd
         for snap in targets:
             assert snap.price_usd is not None
-            amount_raw = int(notional / snap.price_usd * 10 ** decimals[snap.mint])
+            units = 10 ** decimals[snap.mint]
+            amount_raw = int(notional / snap.price_usd * units)
+            ref_amount_raw = int(ref_notional / snap.price_usd * units)
             row = SwapQuote(
                 token_mint=snap.mint,
                 side="sell",
@@ -765,27 +807,40 @@ class Collector:
                 ref_price_usd=snap.price_usd,
                 ref_price_observed_at=snap.observed_at,
                 in_amount_raw=amount_raw,
+                ref_notional_usd=ref_notional,
             )
-            raw_resp: ProviderResponse | None = None
+            responses: list[ProviderResponse] = []
             try:
-                raw_resp = await self.jup.quote(snap.mint, jupiter.USDC_MINT, amount_raw)
-                q = jupiter.parse_quote(raw_resp.payload)
+                # Small reference quote first, then the full size immediately after: the cost
+                # is measured between the two, so a stale snapshot price cannot distort it.
+                ref_resp = await self.jup.quote(snap.mint, jupiter.USDC_MINT, ref_amount_raw)
+                responses.append(ref_resp)
+                resp = await self.jup.quote(snap.mint, jupiter.USDC_MINT, amount_raw)
+                responses.append(resp)
+                ref_q = jupiter.parse_quote(ref_resp.payload)
+                q = jupiter.parse_quote(resp.payload)
                 out_usd = q.out_amount_raw / 10**jupiter.USDC_DECIMALS
-                row.quoted_at = raw_resp.fetched_at
+                ref_out = ref_q.out_amount_raw / 10**jupiter.USDC_DECIMALS
+                row.quoted_at = resp.fetched_at
                 row.out_amount_raw = q.out_amount_raw
                 row.out_usd = out_usd
                 row.slippage_pct = (notional - out_usd) / notional * 100
+                row.ref_out_usd = ref_out
+                # Output per token at full size vs. at reference size (sizes are exact).
+                per_token = q.out_amount_raw / q.in_amount_raw
+                ref_per_token = ref_q.out_amount_raw / ref_q.in_amount_raw
+                row.cost_pct = (1 - per_token / ref_per_token) * 100
                 row.price_impact_pct = q.price_impact_pct
                 row.route_labels = q.route_labels
                 row.context_slot = q.context_slot
-            except (ProviderError, KeyError, ValueError) as exc:
+            except (ProviderError, KeyError, ValueError, ZeroDivisionError) as exc:
                 failures += 1
                 row.quoted_at = utcnow()
                 row.error = f"{type(exc).__name__}: {exc}"
-            result.api_credits_used += 1
+            result.api_credits_used += len(responses) or 1
             async with self.factory() as session, session.begin():
-                if raw_resp is not None:
-                    await store_raw(session, raw_resp, run_id)
+                for r in responses:
+                    await store_raw(session, r, run_id)
                 session.add(row)
             result.rows_written += 1
         if targets and failures == len(targets):

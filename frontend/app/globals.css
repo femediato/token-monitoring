@@ -165,3 +165,13 @@ dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; ma
 dl.kv dt { color: var(--muted); }
 dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 10px; color: var(--muted); }
+
+.scorebar { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; min-width: 72px; }
+.scorebar .num { font-variant-numeric: tabular-nums; min-width: 22px; text-align: right; }
+.scorebar .num.strong { font-weight: 650; }
+.scorebar .track { width: 44px; height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.scorebar .fill { display: block; height: 100%; border-radius: 3px; background: var(--series-1); }
+.reason-row { cursor: pointer; }
+.reason-row.selected td { background: var(--surface-2); font-weight: 600; }
+.explain { color: var(--ink-2); max-width: 900px; }
+.explain p { margin: 0 0 8px; }

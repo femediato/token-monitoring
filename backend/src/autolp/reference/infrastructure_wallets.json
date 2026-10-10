@@ -1,0 +1,4 @@
+{
+  "_doc": "Curated wallets excluded from holder concentration as infrastructure (exchange hot/cold wallets, custodians). Add an entry only after verifying the label on a public explorer (e.g. Solscan). Each entry needs address, label and source. Program-controlled owners (PDAs: AMM vaults, multisigs, lockers) are detected automatically and do not need listing.",
+  "wallets": []
+}

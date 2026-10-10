@@ -51,7 +51,7 @@ TOKEN_COLUMNS = """
     w1.volume_usd AS volume_1h, w1.price_change_pct AS price_change_1h,
     w1.buy_volume_usd / nullif(w1.volume_usd, 0) * 100 AS buy_share_1h,
     sec.status AS security_status, sec.risk_flags,
-    hold.top10_pct_adjusted, q.slippage_pct AS sell_slippage_pct, q.error AS quote_error
+    hold.top10_pct_adjusted, q.cost_pct AS sell_cost_pct, q.error AS quote_error
 """
 
 TOKEN_JOINS = """
@@ -74,7 +74,8 @@ TOKEN_JOINS = """
         ORDER BY hs.observed_at DESC LIMIT 1
     ) hold ON true
     LEFT JOIN LATERAL (
-        SELECT slippage_pct, error FROM swap_quotes sq WHERE sq.token_mint = t.mint
+        SELECT cost_pct, error FROM swap_quotes sq
+        WHERE sq.token_mint = t.mint AND (sq.cost_pct IS NOT NULL OR sq.error IS NOT NULL)
         ORDER BY sq.quoted_at DESC LIMIT 1
     ) q ON true
 """
@@ -95,7 +96,7 @@ SORTABLE = {
     "buy_share_24h": "buy_share_24h",
     "holder_count": "s.holder_count",
     "top10_pct_adjusted": "hold.top10_pct_adjusted",
-    "sell_slippage_pct": "sell_slippage_pct",
+    "sell_cost_pct": "sell_cost_pct",
     "organic_score": "s.organic_score",
 }
 
@@ -350,7 +351,7 @@ async def token_quotes(
         text(
             """
             SELECT quoted_at, side, notional_usd, ref_price_usd, out_usd, slippage_pct,
-                   price_impact_pct, route_labels, error
+                   cost_pct, ref_notional_usd, ref_out_usd, price_impact_pct, route_labels, error
             FROM swap_quotes WHERE token_mint = :mint ORDER BY quoted_at DESC LIMIT :limit
             """
         ),
