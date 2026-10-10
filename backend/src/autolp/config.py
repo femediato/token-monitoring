@@ -7,7 +7,7 @@ APP_ENV profile has its own database so tests never touch dev/prod data.
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +17,7 @@ class AppEnv(StrEnum):
     PROD = "prod"
 
 
-class ProviderSettings(BaseSettings):
+class ProviderSettings(BaseModel):
     """Per-provider endpoint, credentials and request budget."""
 
     base_url: str
@@ -25,6 +25,33 @@ class ProviderSettings(BaseSettings):
     requests_per_second: float = 1.0
     timeout_seconds: float = 15.0
     max_retries: int = 4
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _blank_key_is_none(cls, v: object) -> object:
+        return None if v == "" else v
+
+
+# Each provider has its own class so that setting one field (e.g. JUPITER__API_KEY)
+# keeps the other defaults instead of replacing the whole nested object.
+class JupiterSettings(ProviderSettings):
+    base_url: str = "https://api.jup.ag"
+    requests_per_second: float = 1.0
+
+
+class DexScreenerSettings(ProviderSettings):
+    base_url: str = "https://api.dexscreener.com"
+    requests_per_second: float = 4.0
+
+
+class HeliusSettings(ProviderSettings):
+    base_url: str = "https://mainnet.helius-rpc.com"
+    requests_per_second: float = 5.0
+
+
+class GeckoTerminalSettings(ProviderSettings):
+    base_url: str = "https://api.geckoterminal.com/api/v2"
+    requests_per_second: float = 0.5
 
 
 class Settings(BaseSettings):
@@ -47,18 +74,10 @@ class Settings(BaseSettings):
     # Live trading is out of scope for v1; this flag exists so code can assert on it.
     live_trading_enabled: bool = Field(default=False, frozen=True)
 
-    jupiter: ProviderSettings = ProviderSettings(
-        base_url="https://api.jup.ag", requests_per_second=1.0
-    )
-    dexscreener: ProviderSettings = ProviderSettings(
-        base_url="https://api.dexscreener.com", requests_per_second=4.0
-    )
-    helius: ProviderSettings = ProviderSettings(
-        base_url="https://mainnet.helius-rpc.com", requests_per_second=5.0
-    )
-    geckoterminal: ProviderSettings = ProviderSettings(
-        base_url="https://api.geckoterminal.com/api/v2", requests_per_second=0.5
-    )
+    jupiter: JupiterSettings = JupiterSettings()
+    dexscreener: DexScreenerSettings = DexScreenerSettings()
+    helius: HeliusSettings = HeliusSettings()
+    geckoterminal: GeckoTerminalSettings = GeckoTerminalSettings()
 
     collector_heartbeat_seconds: int = 60
 
