@@ -15,6 +15,7 @@ for the design, schema and phase plan.
 cp .env.example .env      # add JUPITER__API_KEY / HELIUS__API_KEY when available
 make up                   # db + migrations + api + collector, waits until healthy
 curl localhost:8000/health/ready
+open http://localhost:3000   # data explorer
 make test                 # unit + integration (integration uses the autolp_test DB)
 ```
 
@@ -34,6 +35,7 @@ make test                 # unit + integration (integration uses the autolp_test
 | `db` | PostgreSQL 16 + TimescaleDB; `autolp_<env>` plus `autolp_test` |
 | `migrate` | One-shot `alembic upgrade head` before app services start |
 | `api` | FastAPI: `/health`, `/health/ready`, `/monitoring/jobs`, `/monitoring/freshness` |
+| `frontend` | Next.js data explorer on `localhost:3000`: universe, token detail, discovery feed, collection health |
 | `collector` | Scheduled collection from Jupiter, DEX Screener, GeckoTerminal, Helius; every run recorded in `collector_runs` |
 
 ## Conventions

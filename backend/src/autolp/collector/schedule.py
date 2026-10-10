@@ -37,6 +37,7 @@ def job_specs(settings: Settings) -> list[JobSpec]:
             lambda col: partial(col.snapshots, status=TrackingStatus.DORMANT),
         ),
         JobSpec("pools", c.snapshot_minutes, 50, lambda col: col.pools),
+        JobSpec("pool_discovery", 60, 70, lambda col: col.pool_discovery, run_on_start=True),
         JobSpec("security", 60, 100, lambda col: col.security, run_on_start=True),
         JobSpec("candles", c.candles_minutes, 130, lambda col: col.candles),
         JobSpec("quotes", c.quotes_minutes, 160, lambda col: col.quotes),

@@ -34,6 +34,7 @@ from autolp.db.models import (
     Token,
     TokenDiscovery,
     TokenSecurity,
+    TrackingEvent,
     TrackingStatus,
 )
 from autolp.monitoring.health import job_health
@@ -88,6 +89,12 @@ async def test_discovery_classifies_and_records_reasons(
     assert toks["STOCKmint"].tracking_status == "excluded"
     assert toks["STOCKmint"].tracking_reason == "tag:stocks:tokenized_asset"
     assert toks[BONK].discovery_source.startswith("jupiter:toptrending/")
+    async with factory() as s:
+        events = {e.token_mint: e for e in await s.scalars(select(TrackingEvent))}
+    assert len(events) == 3  # one per new token, despite 12 appearances each
+    assert (events[BONK].from_status, events[BONK].to_status) == (None, "active")
+    assert events[BONK].reason.startswith("discovered:")
+    assert events["STOCKmint"].to_status == "excluded"
     assert await count(factory, TokenDiscovery) == 12 * 3
     assert await count(factory, RawObservation) == 12
     assert route.calls.last.request.headers["x-api-key"] == "test-key"
@@ -104,7 +111,13 @@ async def test_rediscovery_reactivates_dormant_token(
     await run_recorded(factory, "discovery", collector.discover)
     async with factory() as s:
         tok = await s.get_one(Token, BONK)
-    assert (tok.tracking_status, tok.tracking_reason) == ("active", "rediscovered")
+    assert tok.tracking_status == "active"
+    assert (tok.tracking_reason or "").startswith("rediscovered:")
+    async with factory() as s:
+        events = (
+            await s.scalars(select(TrackingEvent).where(TrackingEvent.token_mint == BONK))
+        ).all()
+    assert [(e.from_status, e.to_status) for e in events] == [("dormant", "active")]
 
 
 @respx.mock
@@ -287,6 +300,10 @@ async def test_tracking_moves_inactive_tokens_to_dormant(
     assert status["Quiet"] == ("dormant", "below_tracking_floor")
     assert status["Busy"][0] == "active"
     assert status["Back"] == ("active", "above_tracking_floor")
+    async with factory() as s:
+        events = {e.token_mint: e for e in await s.scalars(select(TrackingEvent))}
+    assert set(events) == {"Quiet", "Back"}
+    assert (events["Quiet"].from_status, events["Quiet"].to_status) == ("active", "dormant")
 
 
 async def test_job_health_detects_gaps_and_staleness(factory: Factory) -> None:
@@ -324,3 +341,44 @@ async def test_dormant_tokens_not_in_active_snapshot_batches(
     assert await collector._mints(TrackingStatus.DORMANT) == ["D"]
     async with factory() as s, s.begin():
         await s.execute(update(Token).values(tracking_status=TrackingStatus.ACTIVE))
+
+
+@respx.mock
+async def test_pool_discovery_switches_to_deepest_pool_and_resets_backfill(
+    collector: Collector, factory: Factory
+) -> None:
+    await add_tokens(factory, BONK, primary_pool="ShallowPool", candles_backfilled_at=utcnow())
+    pairs = load_fixture("dexscreener_tokens.json")
+    shallow = {**copy.deepcopy(pairs[0]), "pairAddress": "ShallowPool", "liquidity": {"usd": 5}}
+    respx.get(f"https://api.dexscreener.com/token-pairs/v1/solana/{BONK}").mock(
+        return_value=httpx.Response(200, json=[shallow, pairs[0]])
+    )
+    run = await run_recorded(factory, "pool_discovery", collector.pool_discovery)
+    assert run.status is RunStatus.SUCCESS
+    async with factory() as s:
+        tok = await s.get_one(Token, BONK)
+    assert tok.primary_pool == "5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9"
+    assert tok.candles_backfilled_at is None  # history is re-fetched for the new pool
+
+
+@respx.mock
+async def test_pools_snapshot_primary_pool_by_address(
+    collector: Collector, factory: Factory
+) -> None:
+    deep = "5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9"
+    await add_tokens(factory, BONK, primary_pool=deep)
+    await add_tokens(factory, WIF)  # no pool yet -> bootstrap via token endpoint
+    pairs = load_fixture("dexscreener_tokens.json")
+    by_pair = respx.get(f"https://api.dexscreener.com/latest/dex/pairs/solana/{deep}").mock(
+        return_value=httpx.Response(200, json={"schemaVersion": "1", "pairs": [pairs[0]]})
+    )
+    by_token = respx.get(f"https://api.dexscreener.com/tokens/v1/solana/{WIF}").mock(
+        return_value=httpx.Response(200, json=[pairs[1]])
+    )
+    run = await run_recorded(factory, "pools", collector.pools)
+    assert run.status is RunStatus.SUCCESS and by_pair.called and by_token.called
+    async with factory() as s:
+        snaps = {p.token_mint: p for p in await s.scalars(select(PoolSnapshot))}
+        wif = await s.get_one(Token, WIF)
+    assert snaps[BONK].pool_address == deep and snaps[BONK].reserve_quote
+    assert wif.primary_pool == pairs[1]["pairAddress"]

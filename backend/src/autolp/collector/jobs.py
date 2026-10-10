@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import ColumnElement, and_, func, select, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,6 +28,7 @@ from autolp.db.models import (
     Token,
     TokenDiscovery,
     TokenSecurity,
+    TrackingEvent,
     TrackingStatus,
 )
 from autolp.db.repo import raw_observation_from
@@ -54,6 +55,28 @@ async def store_raw(session: AsyncSession, resp: ProviderResponse, run_id: int) 
     session.add(raw)
     await session.flush()
     return raw.id
+
+
+def set_status(
+    session: AsyncSession,
+    tok: Token,
+    status: TrackingStatus,
+    reason: str,
+    at: datetime,
+    run_id: int | None,
+) -> None:
+    """Change a token's tracking status and record the transition in tracking_events."""
+    session.add(
+        TrackingEvent(
+            token_mint=tok.mint,
+            at=at,
+            from_status=tok.tracking_status,
+            to_status=status,
+            reason=reason,
+            collector_run_id=run_id,
+        )
+    )
+    tok.tracking_status, tok.tracking_reason, tok.tracking_changed_at = status, reason, at
 
 
 @dataclass(frozen=True)
@@ -155,17 +178,51 @@ class Collector:
                         c = classify(jt.mint, jt.tags, jt.launchpad, manual)
                         tok = existing.get(jt.mint)
                         if tok is None:
+                            status, reason = (
+                                (TrackingStatus.EXCLUDED, c.reason)
+                                if c.excluded
+                                else (TrackingStatus.ACTIVE, f"discovered:{list_name}")
+                            )
                             tok = Token(
                                 mint=jt.mint,
                                 first_seen_at=resp.fetched_at,
                                 discovery_source=f"{jupiter.SOURCE}:{list_name}",
-                                tracking_status=TrackingStatus.ACTIVE,
-                                tracking_reason="discovered",
+                                tracking_status=status,
+                                tracking_reason=reason,
                                 tracking_changed_at=resp.fetched_at,
                             )
                             session.add(tok)
+                            session.add(
+                                TrackingEvent(
+                                    token_mint=jt.mint,
+                                    at=resp.fetched_at,
+                                    from_status=None,
+                                    to_status=status,
+                                    reason=reason,
+                                    collector_run_id=run_id,
+                                )
+                            )
                             existing[jt.mint] = tok
                             result.rows_written += 1
+                        elif c.excluded and tok.tracking_status != TrackingStatus.EXCLUDED:
+                            set_status(
+                                session,
+                                tok,
+                                TrackingStatus.EXCLUDED,
+                                c.reason,
+                                resp.fetched_at,
+                                run_id,
+                            )
+                        elif not c.excluded and tok.tracking_status != TrackingStatus.ACTIVE:
+                            # Re-appearing in a discovery list means the token is active again.
+                            set_status(
+                                session,
+                                tok,
+                                TrackingStatus.ACTIVE,
+                                f"rediscovered:{list_name}",
+                                resp.fetched_at,
+                                run_id,
+                            )
                         self._apply_metadata(tok, jt, c, resp.fetched_at)
                         session.add(
                             TokenDiscovery(
@@ -191,13 +248,6 @@ class Collector:
         tok.last_discovered_at = at
         tok.classification, tok.classification_reason = c.classification, c.reason
         tok.classification_version = c.version
-        if c.excluded and tok.tracking_status != TrackingStatus.EXCLUDED:
-            tok.tracking_status, tok.tracking_reason = TrackingStatus.EXCLUDED, c.reason
-            tok.tracking_changed_at = at
-        elif not c.excluded and tok.tracking_status != TrackingStatus.ACTIVE:
-            # Re-appearing in a discovery list means the token is active again.
-            tok.tracking_status, tok.tracking_reason = TrackingStatus.ACTIVE, "rediscovered"
-            tok.tracking_changed_at = at
 
     # ------------------------------------------------------------------ jupiter snapshots
 
@@ -287,22 +337,64 @@ class Collector:
     # ------------------------------------------------------------------ dex screener pools
 
     async def pools(self, run_id: int) -> JobResult:
-        mints = await self._mints(TrackingStatus.ACTIVE)
-        result, failures, batches = JobResult(), 0, chunks(mints, self.cfg.dexscreener_batch_size)
-        for batch in batches:
+        """5-minute pool snapshots: each token's primary (deepest) pool by address; tokens
+        whose pools are not discovered yet are bootstrapped via the token endpoint."""
+        async with self.factory() as session:
+            rows = (
+                await session.execute(
+                    select(Token.mint, Token.primary_pool)
+                    .where(Token.tracking_status == TrackingStatus.ACTIVE)
+                    .order_by(Token.mint)
+                )
+            ).all()
+        with_pool = [(m, p) for m, p in rows if p]
+        without = [m for m, p in rows if not p]
+        size = self.cfg.dexscreener_batch_size
+        requests: list[tuple[str, list[str], set[str]]] = [
+            ("pairs", [p for _, p in batch], {m for m, _ in batch})
+            for batch in chunks(with_pool, size)
+        ] + [("tokens", batch, set(batch)) for batch in chunks(without, size)]
+        result, failures = JobResult(), 0
+        for kind, addresses, mints in requests:
             try:
-                resp = await self.dex.tokens(batch)
+                resp = await (
+                    self.dex.pairs(addresses) if kind == "pairs" else self.dex.tokens(addresses)
+                )
             except ProviderError as exc:
                 failures += 1
-                log.warning("pools_batch_failed", size=len(batch), error=str(exc))
+                log.warning("pools_batch_failed", kind=kind, size=len(addresses), error=str(exc))
                 continue
             result.api_credits_used += 1
-            pairs = dexscreener.parse_pairs(resp.payload, set(batch))
+            pairs = dexscreener.parse_pairs(resp.payload, mints)
             async with self.factory() as session, session.begin():
                 raw_id = await store_raw(session, resp, run_id)
-                result.rows_written += await self._store_pairs(session, pairs, resp, raw_id)
-        if batches and failures == len(batches):
-            raise AllRequestsFailed(f"all {len(batches)} pool batches failed")
+                result.rows_written += await self._store_pairs(
+                    session, pairs, resp, raw_id, set_primary=kind == "tokens"
+                )
+        if requests and failures == len(requests):
+            raise AllRequestsFailed(f"all {len(requests)} pool batches failed")
+        return result
+
+    async def pool_discovery(self, run_id: int) -> JobResult:
+        """Hourly: list every pool of each active token and make the deepest one primary."""
+        mints = await self._mints(TrackingStatus.ACTIVE)
+        result, failures = JobResult(), 0
+        for mint in mints:
+            try:
+                resp = await self.dex.token_pairs(mint)
+            except ProviderError as exc:
+                failures += 1
+                log.warning("pool_discovery_failed", mint=mint, error=str(exc))
+                continue
+            result.api_credits_used += 1
+            pairs = dexscreener.parse_pairs(resp.payload, {mint})
+            async with self.factory() as session, session.begin():
+                raw_id = await store_raw(session, resp, run_id)
+                result.rows_written += await self._store_pairs(
+                    session, pairs, resp, raw_id, set_primary=True
+                )
+        if mints and failures == len(mints):
+            raise AllRequestsFailed(f"all {len(mints)} pool discovery requests failed")
         return result
 
     @staticmethod
@@ -311,6 +403,8 @@ class Collector:
         pairs: list[dexscreener.PairObservation],
         resp: ProviderResponse,
         raw_id: int,
+        *,
+        set_primary: bool,
     ) -> int:
         if not pairs:
             return 0
@@ -367,6 +461,8 @@ class Collector:
             )
             .on_conflict_do_nothing()
         )
+        if not set_primary:
+            return 2 * len(pairs)
         # Primary pool = deepest pool where the token is the base asset.
         best: dict[str, dexscreener.PairObservation] = {}
         for p in pairs:
@@ -377,7 +473,8 @@ class Collector:
             await session.execute(
                 update(Token)
                 .where(Token.mint == mint, Token.primary_pool.is_distinct_from(p.pool_address))
-                .values(primary_pool=p.pool_address)
+                # Candle history belongs to a pool: backfill again for the new primary.
+                .values(primary_pool=p.pool_address, candles_backfilled_at=None)
             )
         return 2 * len(pairs)
 
@@ -720,38 +817,49 @@ class Collector:
                 w.volume_usd >= self.cfg.tracking_min_volume_24h_usd,
             )
         )
-        result = JobResult()
-        async with self.factory() as session, session.begin():
-            to_dormant = await session.execute(
-                update(Token)
-                .where(
-                    Token.tracking_status == TrackingStatus.ACTIVE,
+        recent = now - timedelta(minutes=self.cfg.dormant_snapshot_minutes * 2)
+        transitions: list[tuple[TrackingStatus, TrackingStatus, str, list[ColumnElement[bool]]]] = [
+            (
+                TrackingStatus.ACTIVE,
+                TrackingStatus.DORMANT,
+                "below_tracking_floor",
+                [
                     func.coalesce(Token.tracking_changed_at, Token.first_seen_at) < window_start,
                     Token.mint.not_in(above_floor.where(s.observed_at >= window_start)),
+                ],
+            ),
+            (
+                TrackingStatus.DORMANT,
+                TrackingStatus.ACTIVE,
+                "above_tracking_floor",
+                [Token.mint.in_(above_floor.where(s.observed_at >= recent))],
+            ),
+        ]
+        result, counts = JobResult(), dict[str, int]()
+        async with self.factory() as session, session.begin():
+            for src, dst, reason, conditions in transitions:
+                mints = (
+                    await session.scalars(
+                        update(Token)
+                        .where(Token.tracking_status == src, *conditions)
+                        .values(
+                            tracking_status=dst, tracking_reason=reason, tracking_changed_at=now
+                        )
+                        .returning(Token.mint)
+                    )
+                ).all()
+                session.add_all(
+                    TrackingEvent(
+                        token_mint=m,
+                        at=now,
+                        from_status=src,
+                        to_status=dst,
+                        reason=reason,
+                        collector_run_id=run_id,
+                    )
+                    for m in mints
                 )
-                .values(
-                    tracking_status=TrackingStatus.DORMANT,
-                    tracking_reason="below_tracking_floor",
-                    tracking_changed_at=now,
-                )
-            )
-            recent = now - timedelta(minutes=self.cfg.dormant_snapshot_minutes * 2)
-            to_active = await session.execute(
-                update(Token)
-                .where(
-                    Token.tracking_status == TrackingStatus.DORMANT,
-                    Token.mint.in_(above_floor.where(s.observed_at >= recent)),
-                )
-                .values(
-                    tracking_status=TrackingStatus.ACTIVE,
-                    tracking_reason="above_tracking_floor",
-                    tracking_changed_at=now,
-                )
-            )
-        result.rows_written = to_dormant.rowcount + to_active.rowcount  # type: ignore[attr-defined]
-        log.info(
-            "tracking_updated",
-            dormant=to_dormant.rowcount,  # type: ignore[attr-defined]
-            reactivated=to_active.rowcount,  # type: ignore[attr-defined]
-        )
+                counts[dst.value] = len(mints)
+                result.rows_written += len(mints)
+        log.info("tracking_updated", **counts)
         return result

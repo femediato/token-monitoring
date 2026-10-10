@@ -102,6 +102,25 @@ class Token(Base):
     __table_args__ = (Index("ix_tokens_tracking_status", "tracking_status"),)
 
 
+class TrackingEvent(Base):
+    """Every change of a token's tracking status, with the reason (audit trail)."""
+
+    __tablename__ = "tracking_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    token_mint: Mapped[str] = mapped_column(String(64))
+    at: Mapped[datetime]
+    from_status: Mapped[str | None] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16))
+    reason: Mapped[str] = mapped_column(String(128))
+    collector_run_id: Mapped[int | None] = mapped_column(BigInteger)
+
+    __table_args__ = (
+        Index("ix_tracking_events_at", "at"),
+        Index("ix_tracking_events_mint_at", "token_mint", "at"),
+    )
+
+
 class TokenDiscovery(Base):
     """Why a token entered (or re-entered) the universe: one row per list appearance."""
 

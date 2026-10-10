@@ -7,3 +7,5 @@ __pycache__/
 .ruff_cache/
 node_modules/
 .next/
+next-env.d.ts
+*.tsbuildinfo

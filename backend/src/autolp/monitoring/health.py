@@ -49,16 +49,28 @@ async def job_health(
     for job, started, run_status in rows:
         by_job.setdefault(job, []).append((started, run_status))
 
+    # A job cannot have gaps before it existed: measure each job from its own first run.
+    first_runs = dict(
+        (
+            await session.execute(
+                select(CollectorRun.job, func.min(CollectorRun.started_at)).group_by(
+                    CollectorRun.job
+                )
+            )
+        ).all()
+    )
     out = []
-    window_minutes = (now - since).total_seconds() / 60
+    window_start = since
     for job, every in expected.items():
+        since = max(window_start, first_runs.get(job, window_start))
+        window_minutes = (now - since).total_seconds() / 60
         runs = by_job.get(job, [])
         ok_times = [t for t, s in runs if s == RunStatus.SUCCESS]
         # Gaps are measured from the window start (or first run) through `now`.
         points = [since, *ok_times, now] if ok_times else []
         intervals = [(b - a).total_seconds() / 60 for a, b in zip(points, points[1:], strict=False)]
         if ok_times and runs and runs[0][0] - since > timedelta(minutes=every * 2):
-            intervals = intervals[1:]  # collector started after the window began
+            intervals = intervals[1:]  # job first ran well after the window began
         last = ok_times[-1] if ok_times else None
         since_last = (now - last).total_seconds() / 60 if last else None
         expected_runs = max(1.0, window_minutes / every)
@@ -67,7 +79,7 @@ async def job_health(
             status = "never_ran"
         elif since_last is not None and since_last > every * 3:
             status = "stale"
-        elif any(i > every * 2 for i in intervals) or len(ok_times) < len(runs):
+        elif any(i > every * 2 for i in intervals) or any(s == RunStatus.FAILED for _, s in runs):
             status = "degraded"
         else:
             status = "ok"

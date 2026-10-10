@@ -109,7 +109,8 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 | discovery | 15 min | Jupiter top-trending / top-traded / top-organic-score × 5m/1h/6h/24h (12 req) | `tokens`, `token_discoveries` (list + rank = inclusion reason) |
 | snapshots_active | 5 min | Jupiter Tokens V2 search, 100 mints/req | `market_snapshots`, `market_window_stats` |
 | snapshots_dormant | 60 min | same, dormant tokens | same |
-| pools | 5 min | DEX Screener, 30 mints/req | `pools`, `pool_snapshots` (reserves), `tokens.primary_pool` |
+| pools | 5 min | DEX Screener: primary pools by address (30/req); tokens without a known pool via the token endpoint | `pools`, `pool_snapshots` (reserves) |
+| pool_discovery | 60 min | DEX Screener token-pairs, one request per active token | `pools`, `pool_snapshots`, `tokens.primary_pool` = deepest pool (resets candle backfill when it changes) |
 | candles | 30 min | GeckoTerminal OHLCV (8 candles), top 30 active by liquidity (≥ $100K) | `candles_5m` |
 | candle_backfill | 15 min | GeckoTerminal, 14 days for 2 new tokens/run | `candles_5m` |
 | security | 60 min | Helius `getMultipleAccounts` (mint), refresh 24h | `token_security` |
@@ -138,3 +139,18 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 ### Request budget (observed in the first live run)
 
 Jupiter ≈ 12 + ~4 + ~50 requests per 15 min (discovery, snapshots, quotes) — well under 1 req/s. DEX Screener ≈ 10 req / 5 min. GeckoTerminal ≈ 1.5 req/min average, 6/min peak: the advertised 30/min free limit is not sustainable in practice (constant 429s above ~4/min on 2026-10-10), so 5-minute candles cover only the 30 most liquid active tokens. Phase 3 should point this budget at watchlist candidates. Helius ≈ 80 calls/hour ≈ 60K/month of the 1M free credits.
+
+## 7. Data explorer (built before Phase 3)
+
+Read-only Next.js app (`frontend/`, `localhost:3000`) over a read-only API (`/api/*`, `backend/src/autolp/api/explorer.py`). The browser only talks to the Next.js server, which proxies `/api/*` to the internal API.
+
+| Page | Shows |
+|---|---|
+| Universe `/` | Every token with its latest snapshot: price, market cap, liquidity, 24h volume, 1h/24h change, trades, unique traders, buy share, top-10 concentration (adjusted), $1K sell slippage, security status, class. Filters, sorting, paging, search by symbol/name/mint. |
+| Token `/tokens/<mint>` | Price (5-min candles from the primary pool, or snapshot prices when no candles), liquidity, buy vs sell volume, unique traders; activity windows (5m/1h/6h/24h); pools with reserves; on-chain security; largest holders with exclusions; sell quotes; discovery lists and tracking history. |
+| Discovery `/discovery` | Every tracking-status change (`tracking_events`) with its reason. |
+| Collection health `/health` | Job coverage, gaps, failures, data freshness, requests per provider, universe and row counts. |
+
+Rules: values are shown exactly as stored; missing values render as "—" and unchecked security as "Unchecked", never as safe. Colors follow the validated reference palette (dataviz skill); status badges always pair color with a label.
+
+`tracking_events` (migration 0003) records every active/dormant/excluded transition with its reason; existing tokens were seeded with a `backfill:` event.

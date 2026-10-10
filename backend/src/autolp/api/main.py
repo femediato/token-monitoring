@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autolp import __version__
+from autolp.api import explorer
 from autolp.collector.schedule import expected_minutes
 from autolp.config import get_settings
 from autolp.db.base import utcnow
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Auto LPing", version=__version__, lifespan=lifespan)
+app.include_router(explorer.router)
 
 
 @app.get("/health")

@@ -61,7 +61,10 @@ def parse_pair(d: dict[str, Any]) -> PairObservation:
 
 
 def parse_pairs(payload: Any, mints: set[str]) -> list[PairObservation]:
-    """Pairs where one of `mints` is the base token, on Solana. Other pairs are ignored."""
+    """Pairs where one of `mints` is the base token, on Solana. Other pairs are ignored.
+    Accepts both list payloads and the {"pairs": [...]} envelope."""
+    if isinstance(payload, dict):
+        payload = payload.get("pairs")
     out = []
     for d in payload or []:
         if d.get("chainId") != "solana" or not d.get("pairAddress"):
@@ -79,6 +82,18 @@ class DexScreenerClient:
         await self.http.aclose()
 
     async def tokens(self, mints: list[str]) -> ProviderResponse:
+        """One pair per token (not necessarily the deepest). Used only to bootstrap tokens
+        whose pools have not been discovered yet."""
         if len(mints) > 30:
             raise ValueError("DEX Screener accepts at most 30 token addresses per request")
         return await self.http.get_json(f"/tokens/v1/solana/{','.join(mints)}")
+
+    async def token_pairs(self, mint: str) -> ProviderResponse:
+        """All pools for one token (used to find the deepest pool)."""
+        return await self.http.get_json(f"/token-pairs/v1/solana/{mint}")
+
+    async def pairs(self, pool_addresses: list[str]) -> ProviderResponse:
+        """Current state of specific pools; payload is {"pairs": [...]}."""
+        if len(pool_addresses) > 30:
+            raise ValueError("DEX Screener accepts at most 30 pair addresses per request")
+        return await self.http.get_json(f"/latest/dex/pairs/solana/{','.join(pool_addresses)}")

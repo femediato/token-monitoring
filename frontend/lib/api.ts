@@ -1,0 +1,225 @@
+import useSWR, { type SWRConfiguration } from "swr";
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+async function fetcher<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {}
+    throw new ApiError(res.status, String(detail));
+  }
+  return res.json() as Promise<T>;
+}
+
+/** All data refreshes every minute; collection runs every 5 minutes. */
+export function useApi<T>(path: string | null, config?: SWRConfiguration<T>) {
+  return useSWR<T>(path, fetcher, { refreshInterval: 60_000, keepPreviousData: true, ...config });
+}
+
+export type Num = number | null;
+
+export interface TokenRow {
+  mint: string;
+  symbol: string | null;
+  name: string | null;
+  classification: string | null;
+  classification_reason: string | null;
+  tracking_status: "active" | "dormant" | "excluded";
+  tracking_reason: string | null;
+  tracking_changed_at: string | null;
+  first_seen_at: string;
+  pair_created_at: string | null;
+  launchpad: string | null;
+  tags: string[] | null;
+  primary_pool: string | null;
+  age_days: Num;
+  observed_at: string | null;
+  source_updated_at: string | null;
+  price_usd: Num;
+  market_cap: Num;
+  fdv: Num;
+  liquidity_usd: Num;
+  holder_count: Num;
+  organic_score: Num;
+  top_holders_pct: Num;
+  volume_24h: Num;
+  price_change_24h: Num;
+  traders_24h: Num;
+  trades_24h: Num;
+  buy_share_24h: Num;
+  volume_1h: Num;
+  price_change_1h: Num;
+  buy_share_1h: Num;
+  security_status: "ok" | "risky" | "unknown" | null;
+  risk_flags: string[] | null;
+  top10_pct_adjusted: Num;
+  sell_slippage_pct: Num;
+  quote_error: string | null;
+}
+
+export interface TokenList {
+  total: number;
+  limit: number;
+  offset: number;
+  items: TokenRow[];
+}
+
+export interface WindowStats {
+  window: string;
+  observed_at: string;
+  price_change_pct: Num;
+  liquidity_change_pct: Num;
+  holder_change_pct: Num;
+  volume_usd: Num;
+  buy_volume_usd: Num;
+  sell_volume_usd: Num;
+  organic_buy_volume_usd: Num;
+  organic_sell_volume_usd: Num;
+  num_buys: Num;
+  num_sells: Num;
+  num_traders: Num;
+  num_net_buyers: Num;
+  num_organic_buyers: Num;
+}
+
+export interface PoolRow {
+  address: string;
+  dex_id: string | null;
+  quote_symbol: string | null;
+  labels: string[] | null;
+  pair_created_at: string | null;
+  observed_at: string | null;
+  liquidity_usd: Num;
+  reserve_base: Num;
+  reserve_quote: Num;
+  price_usd: Num;
+  volume_24h: Num;
+  buys_24h: Num;
+  sells_24h: Num;
+  is_primary: boolean;
+}
+
+export interface HolderAccount {
+  account: string;
+  owner: string | null;
+  owner_program: string | null;
+  amount_raw: string;
+  pct_of_supply: number;
+  excluded: "burn" | "program" | null;
+}
+
+export interface TokenDetail {
+  token: TokenRow;
+  windows: WindowStats[];
+  pools: PoolRow[];
+  security: {
+    checked_at: string;
+    status: string;
+    token_program: string | null;
+    mint_authority: string | null;
+    freeze_authority: string | null;
+    decimals: number | null;
+    extensions: string[] | null;
+    risk_flags: string[];
+  } | null;
+  holders: {
+    observed_at: string;
+    method_version: string;
+    top10_pct_raw: Num;
+    top10_pct_adjusted: Num;
+    excluded_pct: Num;
+    accounts: HolderAccount[];
+    error: string | null;
+  } | null;
+  discovery: {
+    appearances: number;
+    first_at: string | null;
+    last_at: string | null;
+    best_rank: number | null;
+    lists: string[] | null;
+  } | null;
+  tracking_events: TrackingEvent[];
+}
+
+export interface TrackingEvent {
+  at: string;
+  token_mint?: string;
+  symbol?: string | null;
+  name?: string | null;
+  from_status: string | null;
+  to_status: string;
+  reason: string;
+  classification?: string | null;
+}
+
+export interface SeriesPoint {
+  t: string;
+  price_usd: Num;
+  market_cap: Num;
+  liquidity_usd: Num;
+  holder_count: Num;
+  buy_volume_1h: Num;
+  sell_volume_1h: Num;
+  traders_1h: Num;
+  net_buyers_1h: Num;
+}
+
+export interface Candle {
+  t: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume_usd: number;
+  is_complete: boolean;
+}
+
+export interface Quote {
+  quoted_at: string;
+  notional_usd: number;
+  ref_price_usd: Num;
+  out_usd: Num;
+  slippage_pct: Num;
+  price_impact_pct: Num;
+  route_labels: string[] | null;
+  error: string | null;
+}
+
+export interface JobHealth {
+  job: string;
+  expected_every_minutes: number;
+  runs: number;
+  successes: number;
+  failures: number;
+  last_success_at: string | null;
+  minutes_since_success: Num;
+  max_gap_minutes: Num;
+  gaps: number;
+  coverage_pct: number;
+  status: "ok" | "degraded" | "stale" | "never_ran";
+}
+
+export interface Overview {
+  collecting_since: string | null;
+  universe: { tracking_status: string; classification: string | null; n: number }[];
+  rows: { table: string; n: number }[];
+  requests_24h: { job: string; requests: number; runs: number }[];
+  jobs: JobHealth[];
+  freshness: {
+    tracked_active: number;
+    tracked_dormant: number;
+    excluded: number;
+    active_with_fresh_snapshot: number;
+    active_stale: number;
+    source_lag_p50_minutes: Num;
+    source_lag_max_minutes: Num;
+    stale_source_values: number;
+  };
+}
