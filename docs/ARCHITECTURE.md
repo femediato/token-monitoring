@@ -110,8 +110,8 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 | snapshots_active | 5 min | Jupiter Tokens V2 search, 100 mints/req | `market_snapshots`, `market_window_stats` |
 | snapshots_dormant | 60 min | same, dormant tokens | same |
 | pools | 5 min | DEX Screener, 30 mints/req | `pools`, `pool_snapshots` (reserves), `tokens.primary_pool` |
-| candles | 15 min | GeckoTerminal OHLCV, top 60 active by liquidity (≥ $100K) | `candles_5m` |
-| candle_backfill | 15 min | GeckoTerminal, 14 days for 3 new tokens/run | `candles_5m` |
+| candles | 30 min | GeckoTerminal OHLCV (8 candles), top 30 active by liquidity (≥ $100K) | `candles_5m` |
+| candle_backfill | 15 min | GeckoTerminal, 14 days for 2 new tokens/run | `candles_5m` |
 | security | 60 min | Helius `getMultipleAccounts` (mint), refresh 24h | `token_security` |
 | holders | 60 min | Helius largest accounts + owner resolution, 25 tokens/run, refresh 24h | `holder_snapshots` |
 | quotes | 15 min | Jupiter quote, sell $1,000 → USDC, tokens with liq ≥ $150K and 24h vol ≥ $500K | `swap_quotes` |
@@ -137,4 +137,4 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 
 ### Request budget (observed in the first live run)
 
-Jupiter ≈ 12 + ~4 + ~50 requests per 15 min (discovery, snapshots, quotes) — well under 1 req/s. DEX Screener ≈ 10 req / 5 min. GeckoTerminal ≤ 24 req/min (throttled below the 30/min free limit, with 15 s+ backoff on 429). Helius ≈ 80 calls/hour ≈ 60K/month of the 1M free credits.
+Jupiter ≈ 12 + ~4 + ~50 requests per 15 min (discovery, snapshots, quotes) — well under 1 req/s. DEX Screener ≈ 10 req / 5 min. GeckoTerminal ≈ 1.5 req/min average, 6/min peak: the advertised 30/min free limit is not sustainable in practice (constant 429s above ~4/min on 2026-10-10), so 5-minute candles cover only the 30 most liquid active tokens. Phase 3 should point this budget at watchlist candidates. Helius ≈ 80 calls/hour ≈ 60K/month of the 1M free credits.

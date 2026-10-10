@@ -52,7 +52,10 @@ class HeliusSettings(ProviderSettings):
 
 class GeckoTerminalSettings(ProviderSettings):
     base_url: str = "https://api.geckoterminal.com/api/v2"
-    requests_per_second: float = 0.4  # free tier allows 30/min; keep headroom
+    # Advertised free limit is 30/min, but in practice (2026-10-10) sustained use above
+    # ~4/min drew constant 429s. Budget ~1.5/min on average, 6/min peak.
+    requests_per_second: float = 0.1
+    rate_limited_backoff_seconds: float = 30.0
 
 
 class CollectionSettings(BaseModel):
@@ -68,12 +71,12 @@ class CollectionSettings(BaseModel):
     jupiter_batch_size: int = 100
     dexscreener_batch_size: int = 30
 
-    candles_minutes: int = 15
-    candles_max_tokens: int = 60
-    candles_lookback: int = 12  # 5-minute candles fetched per refresh
+    candles_minutes: int = 30
+    candles_max_tokens: int = 30
+    candles_lookback: int = 8  # 5-minute candles per refresh (40 min, overlapping the cadence)
     candles_min_liquidity_usd: float = 100_000
     backfill_days: int = 14
-    backfill_tokens_per_run: int = 3
+    backfill_tokens_per_run: int = 2
 
     security_refresh_hours: int = 24
     holders_refresh_hours: int = 24
