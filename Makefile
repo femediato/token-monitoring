@@ -1,7 +1,7 @@
 UV ?= $(shell command -v uv || echo $(HOME)/.local/bin/uv)
 TEST_DATABASE_URL ?= postgresql+asyncpg://autolp:autolp@localhost:5432/autolp_test
 
-.PHONY: up down logs ps restart migrate test test-unit test-integration lint fmt report replay
+.PHONY: up down logs ps restart migrate test test-unit test-integration lint fmt report replay backtest
 
 up:                ## build and start the whole stack
 	docker compose up -d --build --wait
@@ -23,6 +23,9 @@ report:            ## collection acceptance report, e.g. make report HOURS=72
 
 replay:            ## deterministic strategy decision replay, e.g. make replay HOURS=24 END=2026-10-12T00:00
 	docker compose exec -T api python -m autolp.strategies.replay --hours $(or $(HOURS),24) $(if $(END),--end $(END))
+
+backtest:          ## backtest report, e.g. make backtest [DAYS=90] [UNSEAL=1] [ARGS="--set strategy.range.max_hold_hours=6"]
+	docker compose exec -T api python -m autolp.backtest.run $(if $(DAYS),--days $(DAYS)) $(if $(UNSEAL),--unseal-holdout) $(ARGS)
 
 migrate:
 	docker compose run --rm migrate

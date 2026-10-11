@@ -24,6 +24,9 @@ from autolp.strategies.rules import Evaluation, MarketView
 @dataclass
 class History:
     p: StrategyParams = PARAMS
+    # Candles reach the signal job this long after they close (0 = as soon as closed). The
+    # backtest models the live delay; fills and exits use `price_bars`, which has none.
+    candle_latency: timedelta = timedelta(0)
     bars: dict[str, list[Bar]] = field(default_factory=dict)
     evals: dict[str, list[Evaluation]] = field(default_factory=dict)
     _keys: dict[tuple[str, str], list[datetime]] = field(default_factory=dict, repr=False)
@@ -35,10 +38,14 @@ class History:
             self._keys[key] = [x.start if isinstance(x, Bar) else x.at for x in src]
         return self._keys[key]
 
-    def _bars_at(self, mint: str, at: datetime) -> tuple[Bar, ...]:
+    def _bars_at(self, mint: str, at: datetime, n: int | None = None) -> tuple[Bar, ...]:
         bars = self.bars.get(mint, [])
         hi = bisect.bisect_right(self._times("bars", mint), at - FIVE_MIN)  # closed by `at`
-        return tuple(bars[max(0, hi - self.p.data.candles_needed) : hi])
+        return tuple(bars[max(0, hi - (n or self.p.data.candles_needed)) : hi])
+
+    def price_bars(self, mint: str, at: datetime, n: int = 48) -> tuple[Bar, ...]:
+        """The last `n` candles closed by `at`, without candle latency (for executions)."""
+        return self._bars_at(mint, at, n)
 
     def _eval_at(self, mint: str, at: datetime) -> Evaluation | None:
         evs = self.evals.get(mint, [])
@@ -53,7 +60,7 @@ class History:
             prev = self._eval_at(mint, ev.at - timedelta(minutes=lo))
             if prev is not None and prev.at < ev.at - timedelta(minutes=hi):
                 prev = None
-        return MarketView(mint, at, self._bars_at(mint, at), ev, prev)
+        return MarketView(mint, at, self._bars_at(mint, at - self.candle_latency), ev, prev)
 
     def universe(self, at: datetime) -> list[str]:
         """Tokens eligible in their latest fresh evaluation at `at`."""

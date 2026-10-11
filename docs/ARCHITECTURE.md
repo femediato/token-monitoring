@@ -67,6 +67,8 @@ All timestamps `timestamptz`, UTC. Hypertables marked (H).
 
 **Phase 5 (as built)**: `strategy_signals` (H) — every entry check per token, strategy and 15-minute run, with setup levels; parameters are versioned in code (`strategies/params.py`, `strat-v1`). See `docs/STRATEGIES.md`.
 
+**Phase 6 (as built)**: `backtest_runs` — one row per stored backtest report (parameters, splits, trades, equity curves, baselines, input and result digests). See `docs/BACKTESTING.md`.
+
 **Phases 6-7**: `backtest_runs`, paper `orders`, `fills`, `positions`.
 
 ## 4. Dependencies
@@ -160,3 +162,9 @@ Rules: values are shown exactly as stored; missing values render as "—" and un
 ## 8. Phase 5 — trading strategies
 
 Three rule sets (momentum breakout, pullback, range), shared risk rules and a deterministic paper decision engine; specification and interpretations in `docs/STRATEGIES.md`. A `strategy_signals` collector job records every check for the eligible universe every 15 minutes (Strategies page); `make replay` replays the decision engine over stored data and prints a digest of the decisions.
+
+## 9. Phase 6 — backtesting
+
+`autolp.backtest` runs the strat-v1 decision engine over stored point-in-time data for our selection and six comparison universes: a fixed selection, the recorded watchlist, top 30 by market cap, top 30 by volume, random matched tokens, and early-alert entries. Each universe runs under a base and a stress execution scenario.
+
+The window is split 45/15/30 into development, validation and a sealed holdout. A strategy-independent forward-return test measures selection uplift. Reports go to `backtest_runs`, are shown on the Backtests page and are produced by `make backtest`. The engine gained a pluggable execution model (`strategies/execution.py`): entry delay, cost multiplier, stop slippage and deterministic swap failures. Candle latency is modelled for signals only. The live job and the Phase 5 replay keep fill model v0. Full specification: `docs/BACKTESTING.md`.

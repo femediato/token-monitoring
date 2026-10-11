@@ -461,3 +461,144 @@ export interface StrategyParams {
     data: { max_candle_age_minutes: number; max_evaluation_age_minutes: number };
   };
 }
+
+export interface BacktestMetrics {
+  start: string;
+  end: string;
+  hours: number;
+  trades: number;
+  net_pnl_usd: number;
+  net_return_pct: Num;
+  win_rate_pct: Num;
+  profit_factor: Num;
+  gross_profit_usd: number;
+  gross_loss_usd: number;
+  expectancy_usd: Num;
+  expectancy_pct: Num;
+  max_drawdown_pct: number;
+  sharpe: Num;
+  sortino: Num;
+  return_days: number;
+  avg_cost_pct: Num;
+  costs_usd: number;
+  exposure_pct: Num;
+  exits: Record<string, number>;
+  by_strategy: Record<string, { trades: number; pnl_usd: number }>;
+}
+
+export interface BacktestTrade {
+  position: number;
+  strategy: string;
+  mint: string;
+  entry_at: string;
+  exit_at: string;
+  entry_price: number;
+  exit_price: number;
+  exit_fill_price: number;
+  size_usd: number;
+  qty: number;
+  cost_pct: number;
+  proceeds_usd: number;
+  pnl_usd: number;
+  return_pct: number;
+  reason: string;
+}
+
+export interface BacktestRunResult {
+  universe: string;
+  label: string;
+  scenario: string;
+  decision_digest: string;
+  decisions: Record<string, number>;
+  rejections: Record<string, number>;
+  metrics: Record<string, BacktestMetrics>;
+  members_avg: number;
+  candle_coverage_pct: Num;
+  equity: [string, number, number][];
+  trades: BacktestTrade[];
+  open_positions: { mint: string; strategy: string; entry_at: string }[];
+}
+
+export interface ForwardRow {
+  n: number;
+  missing: number;
+  mean_pct: Num;
+  median_pct: Num;
+  hit_rate_pct: Num;
+  net_mean_pct: Num;
+  net_n: number;
+  uplift_pct: Num;
+}
+
+export interface BacktestGate {
+  gate: string;
+  value: Num;
+  threshold: string;
+  status: "pass" | "fail" | "insufficient_data";
+  trades: number;
+  min_trades: number;
+}
+
+export interface BacktestData {
+  tokens: number;
+  evaluations: number;
+  candles: number;
+  first_evaluation_at: string | null;
+  input_digest: string;
+  days_available: number;
+  days_target: number;
+  sufficient: boolean;
+}
+
+export interface ExecutionScenario {
+  name: string;
+  entry_delay_minutes: number;
+  cost_multiplier: number;
+  stop_slippage_pct: number;
+  swap_failure_pct: number;
+}
+
+export interface BacktestReport {
+  id: number;
+  created_at: string;
+  symbols: Record<string, string | null>;
+  version: string;
+  strategy_version: string;
+  model_version: string;
+  window: { start: string; end: string; simulated_until: string; sealed: boolean; days: number };
+  splits: { name: string; start: string; end: string }[];
+  data: BacktestData;
+  params: {
+    strategy: Record<string, unknown>;
+    backtest: { candle_latency_minutes: number; scenarios: Record<string, ExecutionScenario>; universe: Record<string, unknown> } & Record<string, unknown>;
+    overrides: Record<string, unknown>;
+  };
+  runs: BacktestRunResult[];
+  forward: Record<string, Record<string, Record<string, ForwardRow>>>;
+  gates: BacktestGate[];
+  result_digest: string;
+}
+
+export interface BacktestListItem {
+  id: number;
+  created_at: string;
+  version: string;
+  strategy_version: string;
+  model_version: string;
+  window_start: string;
+  window_end: string;
+  sealed: boolean;
+  overrides: Record<string, unknown>;
+  input_digest: string;
+  result_digest: string;
+  data: BacktestData;
+  gates: BacktestGate[];
+  selection: BacktestMetrics | null;
+}
+
+export interface BacktestList {
+  version: string;
+  universes: Record<string, string>;
+  scenarios: string[];
+  items: BacktestListItem[];
+}

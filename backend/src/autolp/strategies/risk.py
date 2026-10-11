@@ -3,7 +3,7 @@
 All amounts are paper amounts in USD. Nothing here places orders.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from autolp.strategies.bars import Bar
@@ -24,9 +24,16 @@ class Position:
     stop: float
     target: float
     exit_by: datetime
-    cost_pct: float  # one-way execution cost estimate used at entry and exit
+    cost_pct: float  # one-way execution cost estimate (the quote) used for sizing
     planned_risk_usd: float
     checked_until: datetime  # bars ending at or before this have been checked for exits
+    exec_cost_pct: float = field(default=-1.0)  # realised one-way cost; defaults to cost_pct
+    pending_exit: str | None = None  # an exit whose swap failed, retried on the next candle
+    exit_attempts: int = 0
+
+    def __post_init__(self) -> None:
+        if self.exec_cost_pct < 0:
+            self.exec_cost_pct = self.cost_pct
 
 
 @dataclass(frozen=True)
@@ -95,7 +102,7 @@ def check_exit(pos: Position, bar: Bar) -> Exit | None:
 
 
 def proceeds(pos: Position, price: float, fee_usd: float) -> float:
-    return pos.qty * price * (1 - pos.cost_pct / 100) - fee_usd
+    return pos.qty * price * (1 - pos.exec_cost_pct / 100) - fee_usd
 
 
 def hold_deadline(entry_at: datetime, hours: float) -> datetime:

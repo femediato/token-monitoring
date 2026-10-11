@@ -468,3 +468,23 @@ class StrategySignal(Base):
     cost_pct: Mapped[float | None] = mapped_column(Double)
 
     __table_args__ = (Index("ix_strategy_signals_at", "evaluated_at"),)
+
+
+class BacktestRun(Base):
+    """A stored backtest report (docs/BACKTESTING.md). `report` holds everything needed to
+    audit it: parameters, splits, trades, equity curves, baselines and digests."""
+
+    __tablename__ = "backtest_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    version: Mapped[str] = mapped_column(String(16))
+    strategy_version: Mapped[str] = mapped_column(String(16))
+    model_version: Mapped[str] = mapped_column(String(16))
+    window_start: Mapped[datetime]
+    window_end: Mapped[datetime]
+    sealed: Mapped[bool] = mapped_column(Boolean)  # holdout not simulated
+    overrides: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    input_digest: Mapped[str] = mapped_column(String(64))
+    result_digest: Mapped[str] = mapped_column(String(64))
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB)
