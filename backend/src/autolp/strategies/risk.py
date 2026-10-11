@@ -84,6 +84,35 @@ def size_position(
     return Sizing(size, size * loss_per_usd + fees, binding)
 
 
+def admit(
+    setup: Setup,
+    liquidity_usd: float | None,
+    equity: float,
+    cash: float,
+    day_start_equity: float,
+    open_count: int,
+    held: set[str],
+    open_risk_usd: float,
+    p: RiskParams,
+) -> Sizing | str:
+    """The shared portfolio rules for a new setup, in a fixed order: daily loss stop,
+    position count, one position per token, sizing, combined open risk. Returns the sizing,
+    or the reason the setup is rejected. `open_count`, `held` and `open_risk_usd` include
+    orders that have not filled yet."""
+    if equity <= day_start_equity * (1 - p.daily_loss_stop_pct / 100):
+        return "daily_loss_stop"
+    if open_count >= p.max_positions:
+        return "max_positions"
+    if p.one_position_per_token and setup.mint in held:
+        return "token_already_held"
+    sizing = size_position(setup, equity, cash, liquidity_usd, p.quoted_size_usd, p)
+    if isinstance(sizing, str):
+        return sizing
+    if open_risk_usd + sizing.planned_risk_usd > equity * p.max_open_risk_pct / 100:
+        return "max_open_risk"
+    return sizing
+
+
 def check_exit(pos: Position, bar: Bar) -> Exit | None:
     """Exit triggered by one completed bar. Within a bar the order of the high and the low
     is unknown, so the stop is assumed to trade first (conservative); a bar opening beyond

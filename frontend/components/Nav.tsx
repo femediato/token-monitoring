@@ -8,6 +8,7 @@ const ITEMS = [
   { href: "/early", label: "Early signals" },
   { href: "/strategies", label: "Strategies" },
   { href: "/backtests", label: "Backtests" },
+  { href: "/paper", label: "Paper portfolio" },
   { href: "/eligibility", label: "Eligibility" },
   { href: "/", label: "Universe" },
   { href: "/discovery", label: "Discovery" },

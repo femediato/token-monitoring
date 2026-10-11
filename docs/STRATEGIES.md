@@ -76,7 +76,7 @@ Paper equity starts at $10,000; fees are $0.05 per swap. Setups in the same step
 - Exits are checked on every completed candle. The order of high and low inside a candle is unknown, so **the stop is assumed to trade first** when both levels are inside one candle. A candle opening beyond a level fills at the open (gap). The time exit fills at the close of the candle that reaches the holding limit.
 - Exit proceeds = price × (1 − one-way cost) − fee.
 
-The Phase 6 backtest runs the same engine with fill model v1 (`strategies/execution.py`, `docs/BACKTESTING.md` section 4): entry delay, a cost multiplier, stop slippage and failed swaps. The live job and `make replay` keep v0.
+The Phase 6 backtest runs the same engine with fill model v1 (`strategies/execution.py`, `docs/BACKTESTING.md` section 4): entry delay, a cost multiplier, stop slippage and failed swaps. The live signal job and `make replay` keep v0. Paper trading (Phase 7, `docs/PAPER_TRADING.md`) fills with executable Jupiter quotes instead.
 
 ## 8. Live job and replay
 
@@ -87,6 +87,6 @@ The Phase 6 backtest runs the same engine with fill model v1 (`strategies/execut
 ## 9. Limitations
 
 - Candles cover only tokens in the candle job; a token without recent candles is checked but cannot set up (`fresh_candles` fails).
-- Live candles arrive ~10 min after they close (GeckoTerminal free tier, about 4 requests a minute). Phase 7 has to decide whether that delay is acceptable or a faster source is needed.
+- Live candles arrive ~10 min after they close (GeckoTerminal free tier, about 4 requests a minute). Paper trading (Phase 7) runs with this delay; its fills record how far price had moved from the signal candle's close, which shows what the delay costs.
 - Replays use each token's current primary pool, as the scoring replays do.
 - History for replays starts when model v1.1 evaluations began (2026-10-10). The plan's 90-day backtest window needs 90 days of stored evaluations, or a Phase 6 recomputation of evaluations from the stored snapshots (available since 2026-10-09).

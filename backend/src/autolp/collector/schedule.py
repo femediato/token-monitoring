@@ -9,6 +9,8 @@ from autolp.collector.jobs import Collector
 from autolp.collector.runs import JobFn
 from autolp.config import Settings
 from autolp.db.models import TrackingStatus
+from autolp.paper.engine import run_paper
+from autolp.paper.params import PAPER
 from autolp.selection.engine import run_scoring
 from autolp.strategies.live import run_strategy_signals
 
@@ -54,6 +56,13 @@ def job_specs(settings: Settings) -> list[JobSpec]:
         # Strategies (Phase 5): after the candles job has fetched the quarter's candles.
         JobSpec(
             "strategy_signals", 15, 600, lambda col: partial(run_strategy_signals, col.factory)
+        ),
+        # Paper trading (Phase 7): executable quotes only, nothing is signed or sent.
+        JobSpec(
+            "paper_trading",
+            PAPER.tick_minutes,
+            30,
+            lambda col: partial(run_paper, col.factory, col.jup),
         ),
     ]
 

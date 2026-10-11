@@ -69,7 +69,7 @@ All timestamps `timestamptz`, UTC. Hypertables marked (H).
 
 **Phase 6 (as built)**: `backtest_runs` — one row per stored backtest report (parameters, splits, trades, equity curves, baselines, input and result digests). See `docs/BACKTESTING.md`.
 
-**Phases 6-7**: `backtest_runs`, paper `orders`, `fills`, `positions`.
+**Phase 7 (as built)**: `paper_accounts`, `paper_positions` (one row per order, from signal to exit), `paper_fills` (every executable quote used as a fill, or the failed attempt, with raw-response ids and the backtest-model price), `paper_events` (audit log; one signal per strategy, token and signal candle) and `paper_equity` (marked every minute). See `docs/PAPER_TRADING.md`.
 
 ## 4. Dependencies
 
@@ -168,3 +168,7 @@ Three rule sets (momentum breakout, pullback, range), shared risk rules and a de
 `autolp.backtest` runs the strat-v1 decision engine over stored point-in-time data for our selection and six comparison universes: a fixed selection, the recorded watchlist, top 30 by market cap, top 30 by volume, random matched tokens, and early-alert entries. Each universe runs under a base and a stress execution scenario.
 
 The window is split 45/15/30 into development, validation and a sealed holdout. A strategy-independent forward-return test measures selection uplift. Reports go to `backtest_runs`, are shown on the Backtests page and are produced by `make backtest`. The engine gained a pluggable execution model (`strategies/execution.py`): entry delay, cost multiplier, stop slippage and deterministic swap failures. Candle latency is modelled for signals only. The live job and the Phase 5 replay keep fill model v0. Full specification: `docs/BACKTESTING.md`.
+
+## 10. Phase 7 — paper trading
+
+The `paper_trading` collector job runs every minute. It reuses the strat-v1 rules, the point-in-time loader and the shared risk check (`risk.admit`, also used by the backtest engine), but fills with executable Jupiter quotes instead of candles. All state lives in the database and every step commits as it happens, so the engine continues after a restart; a Postgres advisory lock keeps one engine running at a time. `make paper-report` prints the summary and the reconciliation; the Paper portfolio page shows positions, equity, execution quality and every decision. Full specification: `docs/PAPER_TRADING.md`.

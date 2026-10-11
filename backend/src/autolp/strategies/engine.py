@@ -32,10 +32,10 @@ from autolp.strategies.risk import (
     Exit,
     Position,
     Sizing,
+    admit,
     check_exit,
     hold_deadline,
     proceeds,
-    size_position,
 )
 from autolp.strategies.rules import MarketView, Setup, Signal
 
@@ -317,32 +317,21 @@ class Engine:
         }
         self._log(out, Decision(at, "signal", s.strategy, s.mint, None, base))
         equity = self.equity()
-        reason: str | None = None
-        held = {x.mint for x in self.positions} | {x.setup.mint for x in self.pending}
-        if equity <= self.day_start_equity * (1 - r.daily_loss_stop_pct / 100):
-            reason = "daily_loss_stop"
-        elif len(self.positions) + len(self.pending) >= r.max_positions:
-            reason = "max_positions"
-        elif r.one_position_per_token and s.mint in held:
-            reason = "token_already_held"
-        if reason is None:
-            assert view.evaluation is not None
-            sizing = size_position(
-                s,
-                equity,
-                self.cash,
-                view.evaluation.features.get("liquidity_usd"),
-                r.quoted_size_usd,
-                r,
-            )
-            if isinstance(sizing, str):
-                reason = sizing
-            elif self.open_risk() + sizing.planned_risk_usd > equity * r.max_open_risk_pct / 100:
-                reason = "max_open_risk"
-        if reason is not None:
-            self._log(out, Decision(at, "reject", s.strategy, s.mint, reason, base))
+        assert view.evaluation is not None
+        sizing = admit(
+            s,
+            view.evaluation.features.get("liquidity_usd"),
+            equity,
+            self.cash,
+            self.day_start_equity,
+            len(self.positions) + len(self.pending),
+            {x.mint for x in self.positions} | {x.setup.mint for x in self.pending},
+            self.open_risk(),
+            r,
+        )
+        if isinstance(sizing, str):
+            self._log(out, Decision(at, "reject", s.strategy, s.mint, sizing, base))
             return
-        assert not isinstance(sizing, str)
         self.pending.append(Pending(s, sizing))
         self._log(
             out,

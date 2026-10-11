@@ -16,6 +16,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -488,3 +489,148 @@ class BacktestRun(Base):
     input_digest: Mapped[str] = mapped_column(String(64))
     result_digest: Mapped[str] = mapped_column(String(64))
     report: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class PaperAccount(Base):
+    """The virtual paper-trading account (docs/PAPER_TRADING.md). Cash changes only with a
+    paper fill, so it can be reconciled from `paper_fills` at any time."""
+
+    __tablename__ = "paper_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), unique=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    starting_equity_usd: Mapped[float] = mapped_column(Double)
+    cash_usd: Mapped[float] = mapped_column(Double)
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB)  # versions and parameters at creation
+
+
+class PaperPosition(Base):
+    """One paper order from signal to final exit. Status: pending (ordered, not filled),
+    open, closed or cancelled. Levels and sizing are copied from the decision."""
+
+    __tablename__ = "paper_positions"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    account_id: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12))
+    strategy: Mapped[str] = mapped_column(String(16))
+    token_mint: Mapped[str] = mapped_column(String(64))
+    strategy_version: Mapped[str] = mapped_column(String(16))
+    paper_version: Mapped[str] = mapped_column(String(16))
+    # Decision
+    signal_at: Mapped[datetime]
+    signal_bar: Mapped[datetime]
+    entry_ref: Mapped[float] = mapped_column(Double)
+    stop: Mapped[float] = mapped_column(Double)
+    target: Mapped[float] = mapped_column(Double)
+    max_hold_hours: Mapped[float] = mapped_column(Double)
+    quoted_cost_pct: Mapped[float] = mapped_column(Double)  # the estimate used for sizing
+    size_usd: Mapped[float] = mapped_column(Double)  # cash committed, incl. entry fee
+    planned_risk_usd: Mapped[float] = mapped_column(Double)
+    sizing_binding: Mapped[str] = mapped_column(String(32))
+    # Entry
+    entry_at: Mapped[datetime | None]
+    entry_price: Mapped[float | None] = mapped_column(Double)  # reference price, before costs
+    entry_cost_pct: Mapped[float | None] = mapped_column(Double)  # realised, vs. reference
+    qty: Mapped[float | None] = mapped_column(Double)
+    exit_by: Mapped[datetime | None]
+    # While open
+    last_price: Mapped[float | None] = mapped_column(Double)
+    last_price_at: Mapped[datetime | None]
+    pending_exit: Mapped[str | None] = mapped_column(String(16))  # trigger whose swap failed
+    exit_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # Exit
+    exit_at: Mapped[datetime | None]
+    exit_reason: Mapped[str | None] = mapped_column(String(24))
+    exit_trigger_price: Mapped[float | None] = mapped_column(Double)
+    exit_price: Mapped[float | None] = mapped_column(Double)  # reference price, before costs
+    exit_cost_pct: Mapped[float | None] = mapped_column(Double)
+    proceeds_usd: Mapped[float | None] = mapped_column(Double)
+    pnl_usd: Mapped[float | None] = mapped_column(Double)
+    cancel_reason: Mapped[str | None] = mapped_column(String(32))
+
+    __table_args__ = (
+        Index("ix_paper_positions_account_status", "account_id", "status"),
+        Index("ix_paper_positions_signal_at", "signal_at"),
+    )
+
+
+class PaperFill(Base):
+    """One executable Jupiter quote used as a paper fill, or the failed attempt to get one.
+
+    Each fill pairs the full-size quote with a small reference quote taken immediately
+    before; the cost is measured between the two, as for `swap_quotes`. `model_price` is
+    what the backtest fill model would have assumed for the same order, filled in once the
+    candles have arrived, so the two can be compared."""
+
+    __tablename__ = "paper_fills"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    position_id: Mapped[int] = mapped_column(BigInteger)
+    side: Mapped[str] = mapped_column(String(4))  # buy | sell
+    decided_at: Mapped[datetime]  # when the order or exit was triggered
+    quoted_at: Mapped[datetime | None]
+    in_amount_raw: Mapped[int | None] = mapped_column(Numeric(40, 0))
+    out_amount_raw: Mapped[int | None] = mapped_column(Numeric(40, 0))
+    usd: Mapped[float | None] = mapped_column(Double)  # USDC paid (buy) or received (sell)
+    qty: Mapped[float | None] = mapped_column(Double)  # tokens received (buy) or sold (sell)
+    ref_price: Mapped[float | None] = mapped_column(Double)  # USD per token, small quote
+    fill_price: Mapped[float | None] = mapped_column(Double)  # USD per token, full quote
+    cost_pct: Mapped[float | None] = mapped_column(Double)
+    fee_usd: Mapped[float | None] = mapped_column(Double)
+    price_impact_pct: Mapped[float | None] = mapped_column(Double)
+    route_labels: Mapped[list[str] | None] = mapped_column(JSONB)
+    trigger_price: Mapped[float | None] = mapped_column(Double)  # entry_ref, stop or target
+    raw_ids: Mapped[list[int] | None] = mapped_column(JSONB)  # raw_observations of the quotes
+    error: Mapped[str | None] = mapped_column(Text)
+    model_price: Mapped[float | None] = mapped_column(Double)
+    model_note: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (Index("ix_paper_fills_position", "position_id"),)
+
+
+class PaperEvent(Base):
+    """Audit log of the paper engine: every signal, rejection, order, fill, failed swap,
+    exit trigger and exit. A signal is recorded once per strategy, token and signal candle,
+    which also makes the engine idempotent across restarts."""
+
+    __tablename__ = "paper_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    account_id: Mapped[int] = mapped_column(Integer)
+    position_id: Mapped[int | None] = mapped_column(BigInteger)
+    at: Mapped[datetime]
+    kind: Mapped[str] = mapped_column(String(16))
+    strategy: Mapped[str | None] = mapped_column(String(16))
+    token_mint: Mapped[str | None] = mapped_column(String(64))
+    signal_bar: Mapped[datetime | None]
+    reason: Mapped[str | None] = mapped_column(String(64))
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+
+    __table_args__ = (
+        Index("ix_paper_events_account_at", "account_id", "at"),
+        Index("ix_paper_events_position", "position_id"),
+        Index(
+            "uq_paper_events_signal",
+            "account_id",
+            "strategy",
+            "token_mint",
+            "signal_bar",
+            unique=True,
+            postgresql_where=text("kind = 'signal'"),
+        ),
+    )
+
+
+class PaperEquity(Base):
+    """Marked paper equity at every engine tick: the paper equity curve."""
+
+    __tablename__ = "paper_equity"
+
+    account_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[datetime] = mapped_column(primary_key=True)
+    cash_usd: Mapped[float] = mapped_column(Double)
+    positions_usd: Mapped[float] = mapped_column(Double)
+    equity_usd: Mapped[float] = mapped_column(Double)
+    open_positions: Mapped[int] = mapped_column(Integer)

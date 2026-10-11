@@ -602,3 +602,143 @@ export interface BacktestList {
   scenarios: string[];
   items: BacktestListItem[];
 }
+
+export interface PaperPosition {
+  id: number;
+  status: "pending" | "open" | "closed" | "cancelled";
+  strategy: string;
+  token_mint: string;
+  strategy_version: string;
+  paper_version: string;
+  signal_at: string;
+  signal_bar: string;
+  entry_ref: number;
+  stop: number;
+  target: number;
+  max_hold_hours: number;
+  quoted_cost_pct: number;
+  size_usd: number;
+  planned_risk_usd: number;
+  sizing_binding: string;
+  entry_at: string | null;
+  entry_price: Num;
+  entry_cost_pct: Num;
+  qty: Num;
+  exit_by: string | null;
+  last_price: Num;
+  last_price_at: string | null;
+  pending_exit: string | null;
+  exit_attempts: number;
+  exit_at: string | null;
+  exit_reason: string | null;
+  exit_trigger_price: Num;
+  exit_price: Num;
+  exit_cost_pct: Num;
+  proceeds_usd: Num;
+  pnl_usd: Num;
+  cancel_reason: string | null;
+}
+
+export interface PaperEvent {
+  id: number;
+  position_id: number | null;
+  at: string;
+  kind: string;
+  strategy: string | null;
+  token_mint: string | null;
+  signal_bar: string | null;
+  reason: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface PaperFill {
+  id: number;
+  side: "buy" | "sell";
+  decided_at: string;
+  quoted_at: string | null;
+  usd: Num;
+  qty: Num;
+  ref_price: Num;
+  fill_price: Num;
+  cost_pct: Num;
+  fee_usd: Num;
+  price_impact_pct: Num;
+  route_labels: string[] | null;
+  trigger_price: Num;
+  raw_ids: number[] | null;
+  error: string | null;
+  model_price: Num;
+  model_note: string | null;
+  shortfall_vs_model_pct: Num;
+}
+
+export interface PaperSide {
+  attempts: number;
+  failed: number;
+  failure_pct: Num;
+  cost_pct: Num;
+  quoted_cost_pct: Num;
+  price_impact_pct: Num;
+  model_n: number;
+  shortfall_vs_model_pct: Num;
+}
+
+export interface PaperTrade {
+  position: number;
+  strategy: string;
+  mint: string;
+  entry_at: string;
+  exit_at: string;
+  entry_price: number;
+  exit_price: number;
+  exit_fill_price: Num;
+  size_usd: number;
+  qty: number;
+  proceeds_usd: number;
+  pnl_usd: number;
+  return_pct: Num;
+  reason: string;
+  entry_cost_pct: Num;
+  exit_cost_pct: Num;
+}
+
+type Assumptions = { cost_multiplier: Num; stop_slippage_pct: Num; swap_failure_pct: Num };
+
+export interface PaperReport {
+  version: string;
+  account: null | {
+    name: string;
+    created_at: string;
+    starting_equity_usd: number;
+    cash_usd: number;
+    equity_usd: number;
+    positions_usd: number;
+    params: Record<string, unknown>;
+  };
+  running_since: string;
+  days: number;
+  positions: Record<string, number>;
+  metrics: BacktestMetrics;
+  execution: {
+    buy: PaperSide;
+    sell: PaperSide;
+    stop_slippage_pct: Num;
+    stops: number;
+    vs_backtest: { assumed: Assumptions; observed: Assumptions };
+  };
+  progress: { days: number; days_required: number; trades: number; trades_required: number };
+  trades: PaperTrade[];
+  reconciliation: { ok: boolean; positions: number; cash_from_fills_usd: number; cash_usd: number; issues: { position: number | null; issue: string }[] };
+  open: PaperPosition[];
+  equity: { at: string; equity_usd: number; cash_usd: number; positions_usd: number; open_positions: number }[];
+  events: PaperEvent[];
+  symbols: Record<string, string | null>;
+}
+
+export interface PaperPositionDetail {
+  position: PaperPosition;
+  symbol: string | null;
+  events: PaperEvent[];
+  fills: PaperFill[];
+  issues: string[];
+}
