@@ -362,6 +362,45 @@ async def test_pool_discovery_switches_to_deepest_pool_and_resets_backfill(
 
 
 @respx.mock
+async def test_pool_discovery_ignores_pools_listed_with_base_and_quote_swapped(
+    collector: Collector, factory: Factory
+) -> None:
+    """DEX Screener can list a token/token pool with base and quote swapped and a nonsense
+    liquidity; it must not become primary (its candles would be the other token's)."""
+    await add_tokens(factory, BONK)
+    async with factory() as s, s.begin():  # the pool as first seen: WIF is its base
+        s.add(
+            Pool(address="TokenTokenPool", token_mint=WIF, quote_mint=BONK, first_seen_at=utcnow())
+        )
+    pairs = load_fixture("dexscreener_tokens.json")
+    swapped = {
+        **copy.deepcopy(pairs[0]),
+        "pairAddress": "TokenTokenPool",
+        "quoteToken": {"address": WIF, "name": "dogwifhat", "symbol": "$WIF"},
+        "liquidity": {"usd": 157_599_669, "base": 1, "quote": 1},
+    }
+    respx.get(f"https://api.dexscreener.com/token-pairs/v1/solana/{BONK}").mock(
+        return_value=httpx.Response(200, json=[swapped, pairs[0]])
+    )
+    await run_recorded(factory, "pool_discovery", collector.pool_discovery)
+    async with factory() as s:
+        tok = await s.get_one(Token, BONK)
+    assert tok.primary_pool == "5zpyutJu9ee6jFymDGoK7F6S5Kczqtc9FomP3ueKuyA9"
+
+
+@respx.mock
+async def test_candles_are_requested_for_the_tracked_token(
+    collector: Collector, factory: Factory
+) -> None:
+    route = respx.get(
+        "https://api.geckoterminal.com/api/v2/networks/solana/pools/P/ohlcv/minute"
+    ).mock(return_value=httpx.Response(200, json=load_fixture("geckoterminal_ohlcv.json")))
+    await add_tokens(factory, BONK)
+    await collector._fetch_candles(1, BONK, "P", 10, None)
+    assert route.calls.last.request.url.params["token"] == BONK
+
+
+@respx.mock
 async def test_pools_snapshot_primary_pool_by_address(
     collector: Collector, factory: Factory
 ) -> None:

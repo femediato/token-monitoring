@@ -42,13 +42,16 @@ class GeckoTerminalClient:
         await self.http.aclose()
 
     async def ohlcv_5m(
-        self, pool: str, limit: int, before: datetime | None = None
+        self, pool: str, limit: int, before: datetime | None = None, token: str = "base"
     ) -> ProviderResponse:
+        """5-minute candles of `token`'s USD price in `pool`. Pass the token's address: the
+        pool's base asset is not always the token we track (a token/token pool can list
+        it as the quote), and "base" would then return the other token's price."""
         params: dict[str, Any] = {
             "aggregate": 5,
             "limit": limit,
             "currency": "usd",
-            "token": "base",
+            "token": token,
         }
         if before is not None:
             params["before_timestamp"] = int(before.timestamp())

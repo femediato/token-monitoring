@@ -469,9 +469,23 @@ class Collector:
         )
         if not set_primary:
             return 2 * len(pairs)
-        # Primary pool = deepest pool where the token is the base asset.
+        # Primary pool = deepest pool where the token is the base asset. DEX Screener
+        # sometimes lists a token/token pool with base and quote swapped (and a nonsense
+        # liquidity figure); a pool registered under another base token is that case and
+        # must never become primary, or the token's depth would come from the wrong side.
+        bases = dict(
+            (
+                await session.execute(
+                    select(Pool.address, Pool.token_mint).where(
+                        Pool.address.in_([p.pool_address for p in pairs])
+                    )
+                )
+            ).all()
+        )
         best: dict[str, dexscreener.PairObservation] = {}
         for p in pairs:
+            if bases.get(p.pool_address) != p.token_mint:
+                continue
             cur = best.get(p.token_mint)
             if cur is None or (p.liquidity_usd or 0) > (cur.liquidity_usd or 0):
                 best[p.token_mint] = p
@@ -581,13 +595,13 @@ class Collector:
     async def _fetch_candles(
         self, run_id: int, mint: str, pool: str, limit: int, before: datetime | None
     ) -> int:
-        resp = await self.gecko.ohlcv_5m(pool, limit, before)
+        resp = await self.gecko.ohlcv_5m(pool, limit, before, token=mint)
         return await self._store_candles(run_id, mint, pool, resp)
 
     async def _fetch_candles_page(
         self, run_id: int, mint: str, pool: str, before: datetime | None
     ) -> tuple[int, datetime | None]:
-        resp = await self.gecko.ohlcv_5m(pool, 1000, before)
+        resp = await self.gecko.ohlcv_5m(pool, 1000, before, token=mint)
         candles = geckoterminal.parse_ohlcv(resp.payload)
         n = await self._store_candles(run_id, mint, pool, resp)
         return n, (candles[0].bucket if candles else None)
