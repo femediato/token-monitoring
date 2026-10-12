@@ -9,6 +9,7 @@ from autolp.api.explorer import Session, _rows
 from autolp.db.models import PaperEvent, PaperFill, PaperPosition
 from autolp.paper import report as rep
 from autolp.paper.params import PAPER_VERSION
+from autolp.strategies.params import PARAMS
 
 router = APIRouter(prefix="/api/paper", tags=["paper"])
 
@@ -32,16 +33,17 @@ async def paper(session: Session) -> dict[str, Any]:
     if acct is None:
         return {"version": PAPER_VERSION, "account": None}
     r = await rep.summary(session, acct)
-    open_ = [
-        _row(p)
-        for p in await session.scalars(
+    book = list(
+        await session.scalars(
             select(PaperPosition)
             .where(
                 PaperPosition.account_id == acct.id, PaperPosition.status.in_(["open", "pending"])
             )
             .order_by(PaperPosition.id)
         )
-    ]
+    )
+    open_ = [_row(p) for p in book]
+    exposure = rep.exposure(book, r["account"]["equity_usd"], PARAMS.risk)
     curve = _rows(
         await session.execute(
             text(
@@ -67,7 +69,7 @@ async def paper(session: Session) -> dict[str, Any]:
     mints = {p["token_mint"] for p in open_} | {t["mint"] for t in r["trades"]}
     mints |= {e["token_mint"] for e in events if e["token_mint"]}
     r["trades"] = r["trades"][::-1][:200]
-    return {**r, "open": open_, "equity": curve, "events": events,
+    return {**r, "open": open_, "exposure": exposure, "equity": curve, "events": events,
             "symbols": await _symbols(session, mints)}  # fmt: skip
 
 

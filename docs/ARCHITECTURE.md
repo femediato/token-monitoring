@@ -114,7 +114,7 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 | snapshots_active | 5 min | Jupiter Tokens V2 search, 100 mints/req | `market_snapshots`, `market_window_stats` |
 | snapshots_dormant | 60 min | same, dormant tokens | same |
 | pools | 5 min | DEX Screener: primary pools by address (30/req); tokens without a known pool via the token endpoint | `pools`, `pool_snapshots` (reserves) |
-| pool_discovery | 60 min | DEX Screener token-pairs, one request per active token | `pools`, `pool_snapshots`, `tokens.primary_pool` = deepest pool (resets candle backfill when it changes) |
+| pool_discovery | 60 min | DEX Screener token-pairs, one request per active token | `pools`, `pool_snapshots`, `tokens.primary_pool` = deepest pool registered with the token as base (resets candle backfill when it changes) |
 | candles | 15 min | GeckoTerminal OHLCV (8 candles), 24 tokens: eligible first, then by liquidity (≥ $100K) | `candles_5m` |
 | candle_backfill | 15 min | GeckoTerminal, 14 days for 2 new tokens/run (eligible first) | `candles_5m` |
 | security | 60 min | Helius `getMultipleAccounts` (mint), refresh 24h | `token_security` |
@@ -129,7 +129,8 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 - Classifier v1 (`autolp/universe.py`) works by exclusion because Jupiter's `meme` tag is sparse: excluded tags (stocks, RWA, stable, LST, DeFi, infra, major), excluded mints, manual list; otherwise `meme` (tag or meme launchpad) or `meme_candidate`.
 - Security: active mint/freeze authority and risky Token-2022 extensions (permanent delegate, transfer hook, transfer fee > 0, pausable, non-transferable, default-frozen, mint close authority) → `risky`. Missing/unparseable account → `unknown`, never `ok`.
 - Holders (method v1): top-20 accounts from RPC; owners resolved; owners that are program-controlled accounts (AMM vaults, bonding curves, lockers) are excluded as `program`, incinerator as `burn` (also removed from supply). Unresolvable owners are counted, so missing data never lowers concentration.
-- Candles: a candle is `is_complete` once its 5-minute bucket has closed at fetch time; complete candles are never overwritten.
+- Candles: a candle is `is_complete` once its 5-minute bucket has closed at fetch time; complete candles are never overwritten. Candles are requested for the tracked token's address (`token=<mint>`), not the pool's base asset.
+- Swapped pools: DEX Screener sometimes lists a token/token pool with base and quote swapped and a nonsense liquidity figure. A pool registered under another base token never becomes primary. Until 2026-10-12 such a pool could, and STONK's stored candles from pool `7xFh…` (to 04:45 UTC that day) are the other token's price, about 774× too high. They stay stored but are not read while that pool isn't primary; no strategy setup or paper trade used them.
 - Quotes: `slippage_pct = (notional − USDC out) / notional`, against the latest Jupiter price; failures (no route, disabled pool) are stored with the error.
 - Staleness: `market_snapshots.source_updated_at` records the provider's own update time; lag is reported by monitoring.
 
@@ -172,3 +173,7 @@ The window is split 45/15/30 into development, validation and a sealed holdout. 
 ## 10. Phase 7 — paper trading
 
 The `paper_trading` collector job runs every minute. It reuses the strat-v1 rules, the point-in-time loader and the shared risk check (`risk.admit`, also used by the backtest engine), but fills with executable Jupiter quotes instead of candles. All state lives in the database and every step commits as it happens, so the engine continues after a restart; a Postgres advisory lock keeps one engine running at a time. `make paper-report` prints the summary and the reconciliation; the Paper portfolio page shows positions, equity, execution quality and every decision. Full specification: `docs/PAPER_TRADING.md`.
+
+## 11. Phase 8 — dashboard
+
+The five screens of the plan (watchlist, early opportunities, trading signals, paper portfolio, performance analytics) lead the navigation. Phase 8 added the trading-signals screen (annotated candle charts), the performance page, portfolio exposure and the read-only analytics API (`/api/analytics/signals`, `/api/analytics/chart/{mint}`, `/api/analytics/performance`). Signal accuracy follows every paper signal, taken or rejected, on the candles with the backtest's exit rules. Full specification: `docs/DASHBOARD.md`.

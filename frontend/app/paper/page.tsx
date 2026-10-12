@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { STRATEGY_STYLE } from "@/components/TradeChart";
 import TimeChart, { type SeriesSpec } from "@/components/TimeChart";
 import { Badge, ErrorNotice, Tile } from "@/components/ui";
 import { useApi, type Num, type PaperPositionDetail, type PaperReport } from "@/lib/api";
@@ -140,30 +141,84 @@ function PositionDetail({ id, onClose }: { id: number; onClose: () => void }) {
   );
 }
 
-export default function PaperPage() {
-  const { data: r, error } = useApi<PaperReport>("/api/paper");
-  const [picked, setPicked] = useState<number | null>(null);
-
-  const equitySpec = useMemo<SeriesSpec[]>(
+function ExposureCard({ r }: { r: PaperReport }) {
+  const x = r.exposure;
+  const equity = r.account?.equity_usd ?? 0;
+  const spec = useMemo<SeriesSpec[]>(
     () => [
       {
         kind: "line",
-        label: "Equity",
+        label: "Capital in positions (% of equity)",
         color: "--series-1",
-        format: "usd",
-        data: (r?.equity ?? []).map((e) => ({ time: toTime(e.at), value: e.equity_usd })),
+        format: "count",
+        data: r.equity.map((e) => ({ time: toTime(e.at), value: e.equity_usd > 0 ? (e.positions_usd / e.equity_usd) * 100 : 0 })),
       },
     ],
     [r],
   );
-  const ddSpec = useMemo<SeriesSpec[]>(() => {
-    let peak = -Infinity;
-    const data = (r?.equity ?? []).map((e) => {
-      peak = Math.max(peak, e.equity_usd);
-      return { time: toTime(e.at), value: peak > 0 ? -((peak - e.equity_usd) / peak) * 100 : 0 };
-    });
-    return [{ kind: "line", label: "Drawdown %", color: "--series-1", format: "count", data }];
-  }, [r]);
+  const riskLimit = (x.max_open_risk_pct / 100) * equity;
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h2>Portfolio exposure</h2>
+      <div className="tiles" style={{ marginBottom: 12 }}>
+        <Tile label="In positions" value={pct(x.invested_pct, 1)} hint={`${usd(x.invested_usd)} marked · cash ${pct(100 - (x.invested_pct ?? 0), 1)}`} />
+        <Tile label="Positions" value={`${x.positions} / ${x.max_positions}`} hint="open and pending vs. the limit" />
+        <Tile
+          label="Planned open risk"
+          value={`${pct(x.planned_risk_pct, 2)} / ${pct(x.max_open_risk_pct, 1)}`}
+          hint={`${usd(x.planned_risk_usd)} of ${usd(riskLimit)} allowed, set at entry`}
+        />
+        <Tile label="Loss if all stops hit now" value={usd(x.risk_to_stop_usd)} hint="from the last marks, before costs and slippage" />
+      </div>
+      {x.items.length > 0 && (
+        <table style={{ marginBottom: 12 }}>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Token</th>
+              <th>Strategy</th>
+              <th className="num">Marked value</th>
+              <th>Share of equity</th>
+              <th className="num">Planned risk</th>
+              <th className="num">Risk to stop now</th>
+            </tr>
+          </thead>
+          <tbody>
+            {x.items.map((i) => (
+              <tr key={i.position}>
+                <td>{i.position}</td>
+                <td>
+                  <Sym mint={i.mint} symbols={r.symbols} />
+                </td>
+                <td>
+                  <span className="key-dot" style={{ background: `var(${STRATEGY_STYLE[i.strategy]?.color ?? "--ink-2"})` }} />
+                  {STRATEGY[i.strategy] ?? i.strategy}
+                </td>
+                <td className="num">{usd(i.value_usd)}</td>
+                <td>
+                  <span className="bar-track" aria-hidden>
+                    <span className="bar-fill" style={{ width: `${Math.min(100, i.pct_of_equity ?? 0)}%` }} />
+                  </span>{" "}
+                  <span className="small">{pct(i.pct_of_equity, 1)}</span>
+                </td>
+                <td className="num">{usd(i.planned_risk_usd)}</td>
+                <td className="num">{usd(i.risk_to_stop_usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <h3 className="small" style={{ margin: "0 0 6px" }}>
+        Capital in positions over time (% of equity)
+      </h3>
+      <TimeChart series={spec} />
+    </div>
+  );
+}
+
+export default function PaperPage() {
+  const { data: r, error } = useApi<PaperReport>("/api/paper");
+  const [picked, setPicked] = useState<number | null>(null);
 
   if (error) return <ErrorNotice error={error} />;
   const head = (
@@ -183,10 +238,7 @@ export default function PaperPage() {
 
   const a = r.account;
   const m = r.metrics;
-  const ex = r.execution;
   const rec = r.reconciliation;
-  const obs = ex.vs_backtest.observed;
-  const ass = ex.vs_backtest.assumed;
 
   return (
     <>
@@ -198,7 +250,8 @@ export default function PaperPage() {
         </b>{" "}
         The plan requires at least {r.progress.days_required} days of forward paper trading (and Phase 9 at least{" "}
         {r.progress.trades_required} trades) before live execution is even considered. Until then these numbers describe the
-        pipeline, not an edge.
+        pipeline, not an edge. Equity curve, strategy comparison, signal accuracy, daily results and costs are on{" "}
+        <Link href="/performance">Performance</Link>.
       </div>
 
       <div className="tiles">
@@ -295,88 +348,7 @@ export default function PaperPage() {
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Equity and drawdown</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Marked every minute to the latest small sell quote of each open position (15-minute points shown). Since {utc(r.running_since)}.
-        </p>
-        <TimeChart series={equitySpec} />
-        <h3 className="small" style={{ margin: "12px 0 6px" }}>
-          Drawdown from peak (%)
-        </h3>
-        <TimeChart series={ddSpec} />
-      </div>
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Execution quality — paper fills vs. the backtest model</h2>
-        <p className="muted small" style={{ marginTop: 0 }}>
-          Each fill is a full-size Jupiter quote; its cost is measured against a $10 quote taken just before. &quot;Backtest
-          model&quot; is the price the backtest&apos;s fill model would have used for the same order (next candle open or trigger level,
-          plus the quoted cost); shortfall is how much worse the paper fill was. These observations calibrate the backtest&apos;s
-          execution assumptions.
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Side</th>
-              <th className="num">Attempts</th>
-              <th className="num">Failed</th>
-              <th className="num">Realised cost</th>
-              <th className="num">Quoted estimate</th>
-              <th className="num">Price impact</th>
-              <th className="num">Shortfall vs model (n)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(["buy", "sell"] as const).map((s) => (
-              <tr key={s}>
-                <td>{s === "buy" ? "Entries" : "Exits"}</td>
-                <td className="num">{ex[s].attempts}</td>
-                <td className="num">
-                  {ex[s].failed} <span className="muted small">({pct(ex[s].failure_pct, 1)})</span>
-                </td>
-                <td className="num">{pct(ex[s].cost_pct, 2)}</td>
-                <td className="num">{pct(ex[s].quoted_cost_pct, 2)}</td>
-                <td className="num">{pct(ex[s].price_impact_pct, 2)}</td>
-                <td className="num">
-                  {pct(ex[s].shortfall_vs_model_pct, 2, true)} <span className="muted small">({ex[s].model_n})</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <h3 className="small" style={{ margin: "12px 0 6px" }}>
-          Backtest base assumptions
-        </h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Assumption</th>
-              <th className="num">Backtest (bt-v1 base)</th>
-              <th className="num">Observed in paper</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Realised cost ÷ quoted cost</td>
-              <td className="num">× {n(ass.cost_multiplier)}</td>
-              <td className="num">{obs.cost_multiplier == null ? DASH : `× ${n(obs.cost_multiplier)}`}</td>
-            </tr>
-            <tr>
-              <td>Stop fill below trigger</td>
-              <td className="num">{pct(ass.stop_slippage_pct, 1)}</td>
-              <td className="num">
-                {pct(obs.stop_slippage_pct, 2)} <span className="muted small">({ex.stops} stops)</span>
-              </td>
-            </tr>
-            <tr>
-              <td>Failed swaps (quote unavailable)</td>
-              <td className="num">{pct(ass.swap_failure_pct, 1)}</td>
-              <td className="num">{pct(obs.swap_failure_pct, 1)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <ExposureCard r={r} />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <h2>Closed trades</h2>

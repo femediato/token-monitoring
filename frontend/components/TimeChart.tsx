@@ -12,7 +12,7 @@ import {
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 
-export type Point = { time: number; value: number };
+export type Point = { time: number; value: number; color?: string };
 export type Bar = { time: number; open: number; high: number; low: number; close: number };
 
 export type SeriesSpec =
@@ -25,7 +25,7 @@ export type Format = "price" | "usd" | "count";
 
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
 
-function formatter(format: Format, sample: number) {
+export function formatter(format: Format, sample: number) {
   if (format === "price") {
     const digits = sample >= 1 ? 4 : Math.min(12, Math.max(4, -Math.floor(Math.log10(sample || 1)) + 3));
     return (v: number) => v.toFixed(digits);
@@ -34,11 +34,11 @@ function formatter(format: Format, sample: number) {
   return (v: number) => compact.format(v);
 }
 
-function cssVar(name: string) {
+export function cssVar(name: string) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-function useColorScheme() {
+export function useColorScheme() {
   const [scheme, setScheme] = useState<"light" | "dark">("light");
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -96,10 +96,17 @@ export default function TimeChart({ series, tall }: { series: SeriesSpec[]; tall
         l.setData(s.data.map((d) => ({ ...d, time: d.time as UTCTimestamp })));
       } else {
         const h = chart.addSeries(HistogramSeries, { color: cssVar(s.color), priceLineVisible: false });
-        h.setData(s.data.map((d) => ({ ...d, time: d.time as UTCTimestamp })));
+        // A per-point colour is a CSS token name (e.g. "--down"), resolved here.
+        h.setData(s.data.map((d) => ({ ...d, time: d.time as UTCTimestamp, color: d.color ? cssVar(d.color) : undefined })));
       }
     }
     chart.timeScale().fitContent();
+    // A handful of bars would each fill a wide slot: keep histogram marks thin.
+    const longest = Math.max(...series.map((s) => s.data.length));
+    if (series.every((s) => s.kind === "histogram") && longest < 40) {
+      chart.timeScale().applyOptions({ barSpacing: 28, rightOffset: 2 });
+      chart.timeScale().scrollToRealTime();
+    }
     return () => chart.remove();
   }, [series, scheme]);
 

@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autolp import __version__
-from autolp.api import backtests, early, explorer, paper, selection, strategies
+from autolp.api import analytics, backtests, early, explorer, paper, selection, strategies
 from autolp.collector.schedule import expected_minutes
 from autolp.config import get_settings
 from autolp.db.base import utcnow
@@ -37,6 +37,7 @@ app.include_router(early.router)
 app.include_router(strategies.router)
 app.include_router(backtests.router)
 app.include_router(paper.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")

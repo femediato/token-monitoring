@@ -35,7 +35,7 @@ make test                 # unit + integration (integration uses the autolp_test
 | `db` | PostgreSQL 16 + TimescaleDB; `autolp_<env>` plus `autolp_test` |
 | `migrate` | One-shot `alembic upgrade head` before app services start |
 | `api` | FastAPI: `/health`, `/health/ready`, `/monitoring/jobs`, `/monitoring/freshness` |
-| `frontend` | Next.js data explorer on `localhost:3000`: universe, token detail, discovery feed, collection health |
+| `frontend` | Next.js dashboard on `localhost:3000`: watchlist, early opportunities, trading signals, paper portfolio, performance, plus the data explorer (see `docs/DASHBOARD.md`) |
 | `collector` | Scheduled collection from Jupiter, DEX Screener, GeckoTerminal, Helius; every run recorded in `collector_runs` |
 
 ## Conventions

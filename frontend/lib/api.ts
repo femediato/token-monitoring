@@ -730,6 +730,7 @@ export interface PaperReport {
   trades: PaperTrade[];
   reconciliation: { ok: boolean; positions: number; cash_from_fills_usd: number; cash_usd: number; issues: { position: number | null; issue: string }[] };
   open: PaperPosition[];
+  exposure: Exposure;
   equity: { at: string; equity_usd: number; cash_usd: number; positions_usd: number; open_positions: number }[];
   events: PaperEvent[];
   symbols: Record<string, string | null>;
@@ -741,4 +742,140 @@ export interface PaperPositionDetail {
   events: PaperEvent[];
   fills: PaperFill[];
   issues: string[];
+}
+
+export interface Exposure {
+  invested_usd: number;
+  invested_pct: Num;
+  positions: number;
+  max_positions: number;
+  planned_risk_usd: number;
+  planned_risk_pct: Num;
+  max_open_risk_pct: number;
+  risk_to_stop_usd: number;
+  by_strategy: Record<string, number>;
+  items: { position: number; strategy: string; mint: string; value_usd: number; pct_of_equity: Num; planned_risk_usd: number; risk_to_stop_usd: number }[];
+}
+
+// ---------------------------------------------------------------- analytics (Phase 8)
+
+export interface SignalOutcome {
+  status: "waiting" | "open" | "target" | "stop" | "time" | "no_data";
+  exit_reason: string | null;
+  entry_at: string | null;
+  entry_price: Num;
+  exit_at: string | null;
+  exit_price: Num;
+  gross_pct: Num;
+  net_pct: Num;
+  best_pct: Num;
+  worst_pct: Num;
+}
+
+export interface SignalRow {
+  id: number;
+  at: string;
+  strategy: string;
+  mint: string;
+  symbol: string | null;
+  signal_bar: string;
+  position_id: number | null;
+  reject_reason: string | null;
+  decision: "taken" | "rejected" | "cancelled";
+  status: string | null;
+  entry_at: string | null;
+  entry_price: Num;
+  exit_at: string | null;
+  exit_price: Num;
+  exit_reason: string | null;
+  pnl_usd: Num;
+  size_usd: Num;
+  last_price: Num;
+  qty: Num;
+  cancel_reason: string | null;
+  entry_ref: number;
+  stop: number;
+  target: number;
+  max_hold_hours: number;
+  cost_pct: number;
+  paper_return_pct: Num;
+  outcome: SignalOutcome;
+}
+
+export interface AccuracyStats {
+  signals: number;
+  resolved: number;
+  status: Record<string, number>;
+  target_hit_pct: Num;
+  positive_pct: Num;
+  mean_net_pct: Num;
+  median_net_pct: Num;
+  paper_n: number;
+  paper_mean_return_pct: Num;
+  ideal_mean_net_pct: Num;
+}
+
+export interface SignalsReport {
+  version: string;
+  days: number;
+  accuracy: Record<string, { all: AccuracyStats; taken: AccuracyStats; rejected: AccuracyStats }>;
+  items: SignalRow[];
+}
+
+export interface ChartData {
+  mint: string;
+  symbol: string | null;
+  pool: string | null;
+  start: string;
+  end: string;
+  candles: { t: string; open: number; high: number; low: number; close: number; volume_usd: number }[];
+  signals: SignalRow[];
+}
+
+export interface StrategyStats {
+  trades: number;
+  wins: number;
+  win_rate_pct: Num;
+  net_pnl_usd: number;
+  profit_factor: Num;
+  expectancy_usd: Num;
+  expectancy_pct: Num;
+  best_pct: Num;
+  worst_pct: Num;
+  avg_hold_hours: Num;
+  exits: Record<string, number>;
+  pnl_before_costs_usd: number;
+  costs: {
+    total_usd: number;
+    entry_usd: number;
+    exit_usd: number;
+    fees_usd: number;
+    stop_overshoot_usd: number;
+    volume_usd: number;
+    pct_of_volume: Num;
+    per_trade_usd: Num;
+  };
+}
+
+export interface DailyRow {
+  day: string;
+  trades: number;
+  wins: number;
+  pnl_usd: number;
+  costs_usd: number;
+  equity_usd: Num;
+  return_pct: Num;
+}
+
+export interface Performance {
+  version: string;
+  paper_version: string;
+  account: PaperReport["account"];
+  running_since: string;
+  progress: PaperReport["progress"];
+  metrics: BacktestMetrics;
+  execution: PaperReport["execution"];
+  by_strategy: Record<string, StrategyStats>;
+  daily: DailyRow[];
+  equity: { at: string; equity_usd: number; positions_usd: number; open_positions: number }[];
 }

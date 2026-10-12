@@ -4,8 +4,9 @@ import Link from "next/link";
 import { use, useMemo, useState } from "react";
 import ScoreCard from "@/components/ScoreCard";
 import TimeChart, { toPoints, type SeriesSpec } from "@/components/TimeChart";
+import TradeChart from "@/components/TradeChart";
 import { ErrorNotice, Seg, SecurityBadge, Tile, TrackingBadge } from "@/components/ui";
-import { useApi, type Candle, type Quote, type SeriesPoint, type TokenDetail } from "@/lib/api";
+import { useApi, type Candle, type ChartData, type Quote, type SeriesPoint, type TokenDetail } from "@/lib/api";
 import { ago, compactNum, days, DASH, num, pct, price, short, signClass, usd, utc } from "@/lib/format";
 
 const RANGES = [
@@ -23,6 +24,8 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
   const series = useApi<{ bucket_seconds: number; points: SeriesPoint[] }>(`/api/tokens/${mint}/series?hours=${hours}`);
   const candles = useApi<{ pool: string | null; candles: Candle[] }>(`/api/tokens/${mint}/candles?hours=${hours}`);
   const quotes = useApi<Quote[]>(`/api/tokens/${mint}/quotes?limit=20`);
+  const trades = useApi<ChartData>(`/api/analytics/chart/${mint}?hours=${hours}`);
+  const withSignals = (trades.data?.signals.length ?? 0) > 0 && (trades.data?.candles.length ?? 0) > 0;
 
   const pts = series.data?.points ?? [];
   const priceSpec = useMemo<SeriesSpec[]>(() => {
@@ -102,7 +105,16 @@ export default function TokenPage({ params }: { params: Promise<{ mint: string }
             the 5-minute snapshot price (close only) instead.
           </div>
         )}
-        <TimeChart series={priceSpec} tall />
+        {withSignals && trades.data ? (
+          <>
+            <p className="small muted" style={{ marginTop: 0 }}>
+              Strategy signals in this window are drawn on the candles; details on <Link href="/signals">Trading signals</Link>.
+            </p>
+            <TradeChart data={trades.data} />
+          </>
+        ) : (
+          <TimeChart series={priceSpec} tall />
+        )}
       </div>
 
       <div className="grid cols-3" style={{ marginBottom: 16 }}>

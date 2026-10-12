@@ -24,7 +24,9 @@ from autolp.backtest.metrics import Point, summarize
 from autolp.backtest.params import BT
 from autolp.db.base import utcnow
 from autolp.db.models import PaperAccount, PaperEquity, PaperEvent, PaperFill, PaperPosition
+from autolp.paper.engine import mark_value
 from autolp.paper.params import PAPER, PAPER_VERSION
+from autolp.strategies.params import RiskParams
 
 TOLERANCE_USD = 1e-6
 GATE_DAYS = 30  # master plan: at least 30 days of forward paper trading
@@ -205,7 +207,7 @@ def execution_quality(
 
 
 def _trade(p: PaperPosition, fills: Sequence[PaperFill]) -> dict[str, Any]:
-    buy = _ok_fills(fills, "buy")[0]
+    buy, sell = _ok_fills(fills, "buy")[0], _ok_fills(fills, "sell")[0]
     basis = (buy.usd or 0) + (buy.fee_usd or 0)
     assert p.entry_at and p.exit_at and p.pnl_usd is not None
     return {
@@ -216,7 +218,8 @@ def _trade(p: PaperPosition, fills: Sequence[PaperFill]) -> dict[str, Any]:
         "exit_at": p.exit_at.isoformat(),
         "entry_price": p.entry_price,
         "exit_price": p.exit_price,
-        "exit_fill_price": _ok_fills(fills, "sell")[0].fill_price,
+        "exit_fill_price": sell.fill_price,
+        "exit_trigger_price": p.exit_trigger_price,
         "size_usd": basis,
         "qty": p.qty,
         "proceeds_usd": p.proceeds_usd,
@@ -225,6 +228,45 @@ def _trade(p: PaperPosition, fills: Sequence[PaperFill]) -> dict[str, Any]:
         "reason": p.exit_reason,
         "entry_cost_pct": p.entry_cost_pct,
         "exit_cost_pct": p.exit_cost_pct,
+        "fees_usd": (buy.fee_usd or 0) + (sell.fee_usd or 0),
+    }
+
+
+def exposure(book: Sequence[PaperPosition], equity: float, risk: RiskParams) -> dict[str, Any]:
+    """What the open book holds against the portfolio limits. Value is marked at the last
+    small sell quote; risk to stop is what the positions would lose (before costs) if every
+    one exited exactly at its stop now."""
+    open_ = [p for p in book if p.status == "open"]
+    rows: list[dict[str, Any]] = []
+    for p in open_:
+        value = mark_value(p)
+        rows.append(
+            {
+                "position": p.id,
+                "strategy": p.strategy,
+                "mint": p.token_mint,
+                "value_usd": value,
+                "pct_of_equity": value / equity * 100 if equity else None,
+                "planned_risk_usd": p.planned_risk_usd,
+                "risk_to_stop_usd": max(0.0, value - (p.qty or 0.0) * p.stop),
+            }
+        )
+    by_strategy: dict[str, float] = defaultdict(float)
+    for r in rows:
+        by_strategy[r["strategy"]] += r["value_usd"]
+    invested = sum(r["value_usd"] for r in rows)
+    planned = sum(p.planned_risk_usd for p in book)  # pending orders count, as in admit()
+    return {
+        "invested_usd": invested,
+        "invested_pct": invested / equity * 100 if equity else None,
+        "positions": len(book),
+        "max_positions": risk.max_positions,
+        "planned_risk_usd": planned,
+        "planned_risk_pct": planned / equity * 100 if equity else None,
+        "max_open_risk_pct": risk.max_open_risk_pct,
+        "risk_to_stop_usd": sum(r["risk_to_stop_usd"] for r in rows),
+        "by_strategy": {k: by_strategy[k] for k in sorted(by_strategy)},
+        "items": rows,
     }
 
 
