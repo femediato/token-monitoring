@@ -1,0 +1,351 @@
+{
+ "name": "round1",
+ "description": "Round 1 (2026-10-15): which exits, filters and risk options improve strat-v1, strategy by strategy, against random entries under the same exits. Defined after seeing the 11-15 Oct paper results, so this window is in-sample for every idea here.",
+ "scenarios": [
+  "base",
+  "paper",
+  "stress"
+ ],
+ "rank_scenario": "paper",
+ "min_trades": 10,
+ "base": {},
+ "variants": [
+  {
+   "name": "v1 all (current)",
+   "set": {}
+  },
+  {
+   "name": "v1 momentum only",
+   "set": {
+    "strategy.enabled": [
+     "momentum"
+    ]
+   }
+  },
+  {
+   "name": "v1 pullback only",
+   "set": {
+    "strategy.enabled": [
+     "pullback"
+    ]
+   }
+  },
+  {
+   "name": "v1 range only",
+   "set": {
+    "strategy.enabled": [
+     "range"
+    ]
+   }
+  },
+  {
+   "name": "v1 momentum+range",
+   "set": {
+    "strategy.enabled": [
+     "momentum",
+     "range"
+    ]
+   }
+  },
+  {
+   "name": "cash (no trades)",
+   "set": {
+    "strategy.enabled": []
+   }
+  }
+ ],
+ "groups": [
+  {
+   "prefix": "random fixed 4h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "grid": {
+    "strategy.random.exit.take_profit_pct": [
+     6,
+     10,
+     15
+    ],
+    "strategy.random.exit.stop_loss_pct": [
+     4,
+     7
+    ]
+   }
+  },
+  {
+   "prefix": "momentum fixed",
+   "set": {
+    "strategy.enabled": [
+     "momentum"
+    ],
+    "strategy.momentum.exit.max_hold_hours": 4
+   },
+   "grid": {
+    "strategy.momentum.exit.take_profit_pct": [
+     6,
+     10,
+     15
+    ],
+    "strategy.momentum.exit.stop_loss_pct": [
+     4,
+     7
+    ]
+   },
+   "baseline_group": "random fixed 4h"
+  },
+  {
+   "prefix": "random atr 4h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.mode": "atr",
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "grid": {
+    "strategy.random.exit.atr_mult": [
+     2,
+     3,
+     5
+    ],
+    "strategy.random.exit.reward_risk": [
+     1.5,
+     2,
+     3
+    ]
+   }
+  },
+  {
+   "prefix": "momentum atr",
+   "set": {
+    "strategy.enabled": [
+     "momentum"
+    ],
+    "strategy.momentum.exit.mode": "atr",
+    "strategy.momentum.exit.max_hold_hours": 4
+   },
+   "grid": {
+    "strategy.momentum.exit.atr_mult": [
+     2,
+     3,
+     5
+    ],
+    "strategy.momentum.exit.reward_risk": [
+     1.5,
+     2,
+     3
+    ]
+   },
+   "baseline_group": "random atr 4h"
+  },
+  {
+   "prefix": "random fixed 8h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.max_hold_hours": 8
+   },
+   "grid": {
+    "strategy.random.exit.take_profit_pct": [
+     6,
+     10,
+     15
+    ],
+    "strategy.random.exit.stop_loss_pct": [
+     4,
+     7
+    ]
+   }
+  },
+  {
+   "prefix": "pullback fixed",
+   "set": {
+    "strategy.enabled": [
+     "pullback"
+    ],
+    "strategy.pullback.exit.max_hold_hours": 8
+   },
+   "grid": {
+    "strategy.pullback.exit.take_profit_pct": [
+     6,
+     10,
+     15
+    ],
+    "strategy.pullback.exit.stop_loss_pct": [
+     4,
+     7
+    ]
+   },
+   "baseline_group": "random fixed 8h"
+  },
+  {
+   "prefix": "random atr 8h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.mode": "atr",
+    "strategy.random.exit.max_hold_hours": 8
+   },
+   "grid": {
+    "strategy.random.exit.atr_mult": [
+     2,
+     3,
+     5
+    ],
+    "strategy.random.exit.reward_risk": [
+     1.5,
+     2,
+     3
+    ]
+   }
+  },
+  {
+   "prefix": "pullback atr",
+   "set": {
+    "strategy.enabled": [
+     "pullback"
+    ],
+    "strategy.pullback.exit.mode": "atr",
+    "strategy.pullback.exit.max_hold_hours": 8
+   },
+   "grid": {
+    "strategy.pullback.exit.atr_mult": [
+     2,
+     3,
+     5
+    ],
+    "strategy.pullback.exit.reward_risk": [
+     1.5,
+     2,
+     3
+    ]
+   },
+   "baseline_group": "random atr 8h"
+  },
+  {
+   "prefix": "range",
+   "set": {
+    "strategy.enabled": [
+     "range"
+    ]
+   },
+   "baseline": "random atr 8h atr_mult=3 reward_risk=2",
+   "grid": {
+    "strategy.range.atr_stop_mult": [
+     0,
+     2,
+     3,
+     4
+    ],
+    "strategy.range.min_reward_risk": [
+     1.5,
+     2,
+     3
+    ]
+   }
+  },
+  {
+   "prefix": "v1 regime",
+   "grid": {
+    "strategy.filters.min_breadth_pct": [
+     30,
+     40,
+     50,
+     60
+    ]
+   }
+  },
+  {
+   "prefix": "v1 token 4h trend",
+   "grid": {
+    "strategy.filters.min_ret_4h_pct": [
+     -10,
+     -5,
+     0
+    ],
+    "strategy.filters.max_ret_4h_pct": [
+     5,
+     10
+    ]
+   }
+  },
+  {
+   "prefix": "v1 entry drift",
+   "grid": {
+    "strategy.risk.max_entry_drift_r": [
+     0.25,
+     0.5,
+     1.0
+    ]
+   }
+  },
+  {
+   "prefix": "v1 slippage sizing",
+   "grid": {
+    "strategy.risk.expected_stop_slippage_pct": [
+     1.7
+    ]
+   }
+  },
+  {
+   "prefix": "v1 breaker",
+   "grid": {
+    "strategy.risk.max_consecutive_losses": [
+     4,
+     6
+    ],
+    "strategy.risk.drawdown_pause_pct": [
+     0,
+     5
+    ]
+   }
+  },
+  {
+   "prefix": "momentum atr manage",
+   "set": {
+    "strategy.enabled": [
+     "momentum"
+    ],
+    "strategy.momentum.exit.mode": "atr",
+    "strategy.momentum.exit.atr_mult": 3,
+    "strategy.momentum.exit.reward_risk": 3
+   },
+   "grid": {
+    "strategy.momentum.manage.trail_atr": [
+     0,
+     2,
+     3
+    ],
+    "strategy.momentum.manage.breakeven_at_r": [
+     0,
+     1
+    ]
+   }
+  },
+  {
+   "prefix": "range manage",
+   "set": {
+    "strategy.enabled": [
+     "range"
+    ],
+    "strategy.range.atr_stop_mult": 3
+   },
+   "grid": {
+    "strategy.range.manage.trail_atr": [
+     0,
+     2,
+     3
+    ],
+    "strategy.range.manage.breakeven_at_r": [
+     0,
+     1
+    ]
+   }
+  }
+ ]
+}

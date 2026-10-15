@@ -1,4 +1,4 @@
-"""Backtest parameters, version bt-v1 (docs/BACKTESTING.md).
+"""Backtest parameters, version bt-v2 (docs/BACKTESTING.md).
 
 Changing any value here changes what a backtest measures: bump BACKTEST_VERSION and record
 the change in docs/BACKTESTING.md. Every stored run keeps the full parameter set.
@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from autolp.strategies.execution import ExecutionParams
 from autolp.strategies.params import ExitParams
 
-BACKTEST_VERSION = "bt-v1"
+BACKTEST_VERSION = "bt-v2"
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,18 @@ class BacktestParams:
                 cost_multiplier=1.0,
                 stop_slippage_pct=1.0,
                 swap_failure_pct=2.0,
+                seed=BACKTEST_VERSION,
+            ),
+            # Paper-calibrated (bt-v2): what the first 43 paper fills (11-15 Oct 2026,
+            # docs/PAPER_TRADING.md) measured - realised cost about the quoted cost, the fill
+            # 0.7% worse than the candle price, stops 1.7% below the trigger, no failures.
+            "paper": ExecutionParams(
+                "paper",
+                entry_delay_minutes=0,
+                cost_multiplier=1.0,
+                stop_slippage_pct=1.7,
+                swap_failure_pct=0.0,
+                price_shortfall_pct=0.7,
                 seed=BACKTEST_VERSION,
             ),
             # Stress: 1.5x costs (the Phase 9 cost gate), a 5-minute later entry, stops 5%

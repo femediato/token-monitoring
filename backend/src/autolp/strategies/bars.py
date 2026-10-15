@@ -1,4 +1,4 @@
-"""Candle helpers: completed 5-minute bars, clock-aligned hourly bars and EMAs."""
+"""Candle helpers: completed 5-minute bars, clock-aligned hourly bars, EMAs and ATR."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -64,3 +64,15 @@ def ema(values: list[float], n: int) -> float | None:
     for v in values[n:]:
         e = v * k + e * (1 - k)
     return e
+
+
+def atr(bars: list[Bar] | tuple[Bar, ...], n: int) -> float | None:
+    """Mean true range of the last n bars (absolute price units); None with fewer than
+    n + 1 bars. A gap between non-contiguous bars counts as part of the range."""
+    if n <= 0 or len(bars) < n + 1:
+        return None
+    window = bars[-n - 1 :]
+    total = 0.0
+    for prev, b in zip(window, window[1:], strict=False):
+        total += max(b.high, prev.close) - min(b.low, prev.close)
+    return total / n

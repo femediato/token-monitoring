@@ -1,4 +1,4 @@
-"""Paper trading parameters, version paper-v1 (docs/PAPER_TRADING.md).
+"""Paper trading parameters, version paper-v2 (docs/PAPER_TRADING.md).
 
 Changing a value here is a paper-trading change: bump PAPER_VERSION and record it in the
 document. Entry and exit rules, sizing and risk limits are the strategies' (strat-v1).
@@ -6,7 +6,7 @@ document. Entry and exit rules, sizing and risk limits are the strategies' (stra
 
 from dataclasses import dataclass
 
-PAPER_VERSION = "paper-v1"
+PAPER_VERSION = "paper-v2"
 
 
 @dataclass(frozen=True)

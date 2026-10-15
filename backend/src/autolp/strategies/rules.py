@@ -6,12 +6,13 @@ None (input missing), and a setup is produced only when every check is True. A s
 paper decision; sizing and portfolio limits are applied in `risk.py`.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from autolp.strategies.bars import Bar, ema, floor_hour, hour_bar
-from autolp.strategies.params import PARAMS, StrategyParams
+from autolp.strategies.bars import Bar, atr, ema, floor_hour, hour_bar
+from autolp.strategies.params import PARAMS, ExitParams, ManageParams, StrategyParams
 
 STRATEGIES = ("momentum", "pullback", "range")
 
@@ -33,6 +34,9 @@ class MarketView:
     bars: tuple[Bar, ...]  # completed candles, ascending
     evaluation: Evaluation | None  # latest at or before `at`
     previous: Evaluation | None  # about an hour before `evaluation`
+    # Share of eligible tokens with a positive 4h return at `at` (filters.min_breadth_pct);
+    # None when too few tokens have one.
+    breadth: float | None = None
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,7 @@ class Setup:
     target: float
     max_hold_hours: float
     cost_pct: float  # expected one-way execution cost, %
+    atr: float = 0.0  # ATR at the signal (price units), for stop management; 0 = unused
 
 
 @dataclass
@@ -85,9 +90,57 @@ def _common(sig: Signal, view: MarketView, p: StrategyParams) -> None:
         age_now = age + (view.at - ev.at).total_seconds() / 60
         sig.values.update(cost_pct=cost, quote_age_minutes=round(age_now, 1))
         sig.checks["cost_estimate"] = age_now <= r.max_quote_age_minutes and cost <= r.max_cost_pct
+    _filters(sig, view, p)
 
 
-def _finish(sig: Signal, view: MarketView, stop: float, target: float, hold: float) -> Signal:
+def _filters(sig: Signal, view: MarketView, p: StrategyParams) -> None:
+    """Optional entry filters (off by default; strat-v1 adds no check here)."""
+    fp = p.filters
+    if fp.min_breadth_pct > 0:
+        sig.values["breadth_pct"] = view.breadth
+        sig.checks["regime"] = None if view.breadth is None else view.breadth >= fp.min_breadth_pct
+    if fp.min_ret_4h_pct is not None or fp.max_ret_4h_pct is not None:
+        ev = view.evaluation
+        r4 = ev.features.get("ret_4h_pct") if ev else None
+        sig.values["ret_4h_pct"] = r4
+        lo = fp.min_ret_4h_pct if fp.min_ret_4h_pct is not None else float("-inf")
+        hi = fp.max_ret_4h_pct if fp.max_ret_4h_pct is not None else float("inf")
+        sig.checks["token_trend"] = None if r4 is None else lo <= r4 <= hi
+
+
+def _atr(sig: Signal, bars: list[Bar], p: StrategyParams, needed: bool) -> float:
+    """ATR of the signal's candles when an option needs it; a missing ATR fails the
+    `atr` check (no setup)."""
+    if not needed:
+        return 0.0
+    a = atr(bars, p.atr_candles)
+    if a is None or not bars or bars[-1].close <= 0:
+        sig.checks["atr"] = None
+        return 0.0
+    sig.values["atr_pct"] = round(a / bars[-1].close * 100, 4)
+    sig.checks["atr"] = a > 0
+    return a
+
+
+def _levels(
+    sig: Signal, bars: list[Bar], x: ExitParams, m: ManageParams, p: StrategyParams
+) -> tuple[float, float, float]:
+    """Stop, target and ATR for the fixed-percentage or ATR exit modes."""
+    entry = bars[-1].close
+    a = _atr(sig, bars, p, x.mode == "atr" or m.trail_atr > 0)
+    if x.mode != "atr" or a <= 0:
+        return entry * (1 - x.stop_loss_pct / 100), entry * (1 + x.take_profit_pct / 100), a
+    dist = min(max(x.atr_mult * a / entry * 100, x.min_stop_pct), x.max_stop_pct)
+    rt = 2 * sig.values.get("cost_pct", 0.0)
+    # Net reward = reward_risk x net risk, with the round-trip cost on both sides.
+    reward = x.reward_risk * (dist + rt) + rt
+    sig.values.update(stop_pct=round(dist, 4), target_pct=round(reward, 4))
+    return entry * (1 - dist / 100), entry * (1 + reward / 100), a
+
+
+def _finish(
+    sig: Signal, view: MarketView, stop: float, target: float, hold: float, a: float = 0.0
+) -> Signal:
     if all(v is True for v in sig.checks.values()):
         sig.setup = Setup(
             sig.strategy,
@@ -99,6 +152,7 @@ def _finish(sig: Signal, view: MarketView, stop: float, target: float, hold: flo
             target,
             hold,
             sig.values["cost_pct"],
+            a,
         )
     return sig
 
@@ -134,15 +188,8 @@ def momentum(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
     )
     if not bars:
         return sig
-    entry = bars[-1].close
-    x = mp.exit
-    return _finish(
-        sig,
-        view,
-        entry * (1 - x.stop_loss_pct / 100),
-        entry * (1 + x.take_profit_pct / 100),
-        x.max_hold_hours,
-    )
+    stop, target, a = _levels(sig, bars, mp.exit, mp.manage, p)
+    return _finish(sig, view, stop, target, mp.exit.max_hold_hours, a)
 
 
 def pullback(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
@@ -190,15 +237,8 @@ def pullback(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
         sig.checks["recovery_candle"] = None
     if not bars:
         return sig
-    entry = bars[-1].close
-    x = pp.exit
-    return _finish(
-        sig,
-        view,
-        entry * (1 - x.stop_loss_pct / 100),
-        entry * (1 + x.take_profit_pct / 100),
-        x.max_hold_hours,
-    )
+    stop, target, a = _levels(sig, bars, pp.exit, pp.manage, p)
+    return _finish(sig, view, stop, target, pp.exit.max_hold_hours, a)
 
 
 def _touches(idx: list[int], gap: int) -> int:
@@ -240,6 +280,9 @@ def range_trade(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
     tol = rp.touch_tolerance * (res - sup)
     stop = sup * (1 - rp.stop_buffer_pct / 100)
     target = res - tol
+    a = _atr(sig, bars, p, rp.atr_stop_mult > 0 or rp.manage.trail_atr > 0)
+    if rp.atr_stop_mult > 0 and a > 0:
+        stop = min(stop, bars[-1].close - rp.atr_stop_mult * a)
     lows, highs = swing_points(prior, rp.swing_neighbours)
     gap = rp.min_touch_gap_candles
     s_tests = _touches([i for i in lows if prior[i].low <= sup + tol], gap)
@@ -271,10 +314,33 @@ def range_trade(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
         rr = reward / risk if risk > 0 else 0.0
         sig.values["reward_risk"] = round(rr, 3)
         sig.checks["reward_risk"] = reward > 0 and rr >= rp.min_reward_risk
-    return _finish(sig, view, stop, target, rp.max_hold_hours)
+    return _finish(sig, view, stop, target, rp.max_hold_hours, a)
 
 
-RULES = {"momentum": momentum, "pullback": pullback, "range": range_trade}
+def random_entry(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
+    """Research baseline: a deterministic pseudo-random entry on prob_pct of the candles,
+    with the shared checks, the filters and the configured exits."""
+    rp = p.random
+    sig = Signal("random", view.mint, view.at)
+    _common(sig, view, p)
+    bars = list(view.bars)
+    if not bars:
+        sig.checks["draw"] = None
+        return sig
+    key = f"{rp.seed}|{view.mint}|{bars[-1].start.isoformat()}".encode()
+    u = int.from_bytes(hashlib.sha256(key).digest()[:8], "big") / 2**64
+    sig.checks["draw"] = u < rp.prob_pct / 100
+    stop, target, a = _levels(sig, bars, rp.exit, rp.manage, p)
+    return _finish(sig, view, stop, target, rp.exit.max_hold_hours, a)
+
+
+RULES = {"momentum": momentum, "pullback": pullback, "range": range_trade, "random": random_entry}
+
+
+def manage_params(p: StrategyParams, strategy: str) -> ManageParams:
+    """The stop-management options of a strategy (defaults for strategies without)."""
+    m = getattr(getattr(p, strategy, None), "manage", None)
+    return m if isinstance(m, ManageParams) else ManageParams()
 
 
 def evaluate(view: MarketView, p: StrategyParams = PARAMS) -> list[Signal]:

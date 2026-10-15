@@ -29,18 +29,20 @@ from autolp.strategies.bars import Bar
 from autolp.strategies.execution import EXEC_V0, ExecutionParams
 from autolp.strategies.params import PARAMS, StrategyParams
 from autolp.strategies.risk import (
+    Breaker,
     Exit,
     Position,
     Sizing,
     admit,
     check_exit,
     hold_deadline,
+    manage_stop,
     proceeds,
 )
 from autolp.strategies.rules import MarketView, Setup, Signal
 
 FILL_WINDOW = timedelta(minutes=10)  # an entry not filled within this is cancelled
-STOP_REASONS = ("stop", "stop_gap", "time_no_data")  # exits that pay stop slippage
+STOP_REASONS = ("stop", "stop_gap", "trail", "time_no_data")  # exits that pay stop slippage
 
 Rule = Callable[[MarketView, StrategyParams], Signal]
 Evaluate = Callable[[MarketView, StrategyParams], list[Signal]]
@@ -107,6 +109,7 @@ class Engine:
         # A signal candle is considered once per strategy and token, even if no newer
         # candle has arrived by the next step.
         self._seen: set[tuple[str, str, datetime]] = set()
+        self.breaker = Breaker(peak=self.cash)
 
     # ------------------------------------------------------------------ state
 
@@ -148,6 +151,7 @@ class Engine:
                 self.marks[mint] = prices[mint][-1].close
         self._fill(at, prices, out)
         self._exits(at, prices, out)
+        self.breaker.on_mark(at, self.equity(), self.p.risk)
         if self.day != at.date():
             self.day, self.day_start_equity = at.date(), self.equity()
         signals = [
@@ -183,11 +187,19 @@ class Engine:
                 else:
                     still.append(pend)
                 continue
+            price = bar.open * (1 + ex.price_shortfall_pct / 100)
+            drift = r.max_entry_drift_r
+            if drift > 0 and price > s.entry_ref + drift * (s.entry_ref - s.stop):
+                self._log(
+                    out,
+                    Decision(at, "cancel", s.strategy, s.mint, "entry_drift", {"price": price}),
+                )
+                continue
             if ex.fails("entry", s.strategy, s.mint, s.signal_bar.isoformat()):
                 self._log(out, Decision(at, "cancel", s.strategy, s.mint, "swap_failed"))
                 continue
             cost = s.cost_pct * ex.cost_multiplier
-            fill = bar.open * (1 + cost / 100)
+            fill = price * (1 + cost / 100)
             size = pend.sizing.size_usd
             pos = Position(
                 id=self._next_id,
@@ -195,7 +207,7 @@ class Engine:
                 mint=s.mint,
                 signal_at=s.at,
                 entry_at=bar.start,
-                entry_price=bar.open,
+                entry_price=price,
                 qty=(size - r.fee_usd_per_swap) / fill,
                 size_usd=size,
                 stop=s.stop,
@@ -205,6 +217,8 @@ class Engine:
                 planned_risk_usd=pend.sizing.planned_risk_usd,
                 checked_until=bar.start,
                 exec_cost_pct=cost,
+                atr=s.atr,
+                high=price,
             )
             self._next_id += 1
             self.cash -= size
@@ -220,7 +234,7 @@ class Engine:
                     {
                         "position": pos.id,
                         "bar": bar.start.isoformat(),
-                        "price": bar.open,
+                        "price": price,
                         "fill_price": fill,
                         "qty": pos.qty,
                         "size_usd": size,
@@ -251,6 +265,7 @@ class Engine:
                     continue
                 if ex:
                     break
+                manage_stop(pos, bar, rules.manage_params(self.p, pos.strategy))
             if ex is not None:
                 reason, price, ex_at = ex.reason, ex.price, ex.at
             elif at >= pos.exit_by and not new_bars:
@@ -259,7 +274,7 @@ class Engine:
             else:
                 remaining.append(pos)
                 continue
-            fill_price = price
+            fill_price = price * (1 - self.ex.price_shortfall_pct / 100)
             if reason in STOP_REASONS:
                 fill_price = price * (1 - self.ex.stop_slippage_pct / 100)
             if pos.exit_attempts:
@@ -267,6 +282,7 @@ class Engine:
             value = proceeds(pos, fill_price, r.fee_usd_per_swap)
             self.cash += value
             pnl = value - pos.size_usd
+            self.breaker.on_exit(at, pnl, r)
             trade = {
                 "position": pos.id,
                 "strategy": pos.strategy,
@@ -318,6 +334,10 @@ class Engine:
         self._log(out, Decision(at, "signal", s.strategy, s.mint, None, base))
         equity = self.equity()
         assert view.evaluation is not None
+        paused = self.breaker.blocked(at)
+        if paused is not None:
+            self._log(out, Decision(at, "reject", s.strategy, s.mint, paused, base))
+            return
         sizing = admit(
             s,
             view.evaluation.features.get("liquidity_usd"),

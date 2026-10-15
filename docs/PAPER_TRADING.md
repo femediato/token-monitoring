@@ -1,4 +1,4 @@
-# Paper trading — paper-v1
+# Paper trading — paper-v2
 
 Phase 7 of the master plan: run the strategies continuously on live data without placing real orders. Code: `backend/src/autolp/paper/`; parameters in `paper/params.py` (changing one is a paper-trading change: bump `PAPER_VERSION` and record it here). Entry and exit rules, sizing and risk limits are strat-v1 (`docs/STRATEGIES.md`), unchanged.
 
@@ -128,3 +128,23 @@ The API is `/api/paper`, `/api/paper/positions/{id}` and `/api/paper/events?kind
   - round-trip loss: 0.21%.
 
   This is one sample; it shows the kind of gap the comparison is there to measure.
+
+## 7. Paper-v2: parallel accounts and research options (2026-10-15)
+
+paper-v2 changes nothing for the `main` account: same rules (strat-v1), same fills, same limits. Its record from 11 Oct continues as the control.
+
+**Parallel accounts** (`paper/accounts.py`). `ACCOUNTS` lists the accounts the `paper_trading` job ticks every minute, `main` first.
+- Each account has a name, a description and strategy-parameter overrides, using the research options of `docs/STRATEGIES.md`, section 10.
+- Each account keeps its own cash, positions, events, equity marks and advisory lock. A failure in a research account is logged and does not stop `main`.
+- An account's overrides are part of its identity: a different rule set gets a new account name, so no record mixes two rule sets.
+- Research accounts forward-test variants shortlisted by the research sweeps (`docs/BACKTESTING.md`, section 11) on data the sweeps never saw. Today only `main` runs.
+
+**Research options in paper trading:**
+- **Breakeven and trailing stop:** applied to the minute marks. After each mark that triggers no exit, the stop is raised from the highest mark since the entry (`high_price`). It applies from the next tick and is logged as a `stop_moved` event. An exit on a raised stop is `trail`.
+  - `initial_stop` and `atr` are stored per position (migration 0009).
+  - Positions opened before paper-v2 have no `initial_stop` and never move their stop.
+- **Entry drift guard:** when the full-size buy quote's reference price is more than `max_entry_drift_r` × R above the signal close, the order is cancelled as `entry_drift`. No cash moves; the quote is still stored as a fill row.
+- **Breaker:** the losing-streak and drawdown pause is replayed from the stored exits and equity marks at every decision, so it survives restarts.
+- **Filters, ATR exits, slippage-aware sizing:** these work through the shared rules and `risk.admit`, as in the backtest.
+
+**Report fix.** The observed cost multiplier ("paper fills vs. the backtest") is now total realised cost ÷ total quoted cost. The earlier mean of per-fill ratios was dominated by fills with a near-zero estimate: it showed 2.97×, while costs actually ran at about 1.0× the quote.

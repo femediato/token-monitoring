@@ -90,3 +90,20 @@ The Phase 6 backtest runs the same engine with fill model v1 (`strategies/execut
 - Live candles arrive ~10 min after they close (GeckoTerminal free tier, about 4 requests a minute). Paper trading (Phase 7) runs with this delay; its fills record how far price had moved from the signal candle's close, which shows what the delay costs.
 - Replays use each token's current primary pool, as the scoring replays do.
 - History for replays starts when model v1.1 evaluations began (2026-10-10). The plan's 90-day backtest window needs 90 days of stored evaluations, or a Phase 6 recomputation of evaluations from the stored snapshots (available since 2026-10-09).
+
+## 10. Research options (off by default)
+
+Added for the strategy research sweeps (`docs/BACKTESTING.md`, section 11). Every option is off by default; with the defaults the decisions are exactly strat-v1's (same replay digest), and no check is added to a signal. A variant that turns options on is identified by its overrides, and becomes a strategy version only when it is adopted.
+
+| Option | Parameters | Effect |
+|---|---|---|
+| ATR exits | `<strategy>.exit.mode = "atr"`, `atr_mult`, `reward_risk`, `min_stop_pct`, `max_stop_pct` | stop = entry − `atr_mult` × ATR (clamped to [min, max] %); target set so the net reward is `reward_risk` × the net risk, with the round-trip cost on both sides. ATR = mean true range of the last `atr_candles` (48) 5-minute candles. |
+| Range ATR stop | `range.atr_stop_mult` | the range stop is the wider of support − 1.5% and entry − k × ATR; the 2:1 reward/risk check uses it |
+| Breakeven | `<strategy>.manage.breakeven_at_r` | once the high since entry is this many R above the entry (R = entry − initial stop), the stop moves to the entry plus the round-trip cost |
+| Trailing stop | `<strategy>.manage.trail_atr`, `trail_after_r` | once the high is `trail_after_r` R up, the stop trails `trail_atr` × ATR below the highest high. Raised only after a candle completes, so it applies from the next candle; an exit on a raised stop is `trail` and pays stop slippage |
+| Market regime | `filters.min_breadth_pct`, `min_breadth_tokens` | new check `regime`: the share of eligible tokens (latest fresh evaluation) with a positive `ret_4h_pct` must be at least this. Fewer than `min_breadth_tokens` tokens → missing → no trade |
+| Token trend | `filters.min_ret_4h_pct`, `max_ret_4h_pct` | new check `token_trend`: the token's own 4h return within the bounds; missing → no trade |
+| Entry drift guard | `risk.max_entry_drift_r` | an entry whose fill price is more than this × R above the signal close is cancelled (`entry_drift`) |
+| Slippage-aware sizing | `risk.expected_stop_slippage_pct` | sizing budgets for the stop overshoot: loss per $ = stop distance + round-trip cost + this |
+| Breaker | `risk.max_consecutive_losses`, `drawdown_pause_pct`, `pause_hours` | no new entries for `pause_hours` after that many losses in a row (`loss_streak`) or after equity falls that far below its peak (`drawdown_pause`) |
+| Random entries | `enabled = ["random"]`, `random.prob_pct`, `random.exit`, `random.manage` | research baseline only: enters on a deterministic pseudo-random `prob_pct` of candles (hash of seed, token and candle), with the shared checks, the filters and the given exits |

@@ -28,6 +28,10 @@ class ExecutionParams:
     # at the open of the next candle.
     swap_failure_pct: float = 0.0
     seed: str = "autolp"
+    # Adverse price move between the candle price and the actual fill, on every entry
+    # (up) and every non-stop exit (down); stops pay stop_slippage_pct instead. Paper fills
+    # measured it as the gap between the fill and the next candle's open.
+    price_shortfall_pct: float = 0.0
 
     def fails(self, *key: object) -> bool:
         if self.swap_failure_pct <= 0:

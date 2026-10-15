@@ -30,6 +30,7 @@ class History:
     bars: dict[str, list[Bar]] = field(default_factory=dict)
     evals: dict[str, list[Evaluation]] = field(default_factory=dict)
     _keys: dict[tuple[str, str], list[datetime]] = field(default_factory=dict, repr=False)
+    _breadth: dict[datetime, float | None] = field(default_factory=dict, repr=False)
 
     def _times(self, kind: str, mint: str) -> list[datetime]:
         key = (kind, mint)
@@ -60,7 +61,25 @@ class History:
             prev = self._eval_at(mint, ev.at - timedelta(minutes=lo))
             if prev is not None and prev.at < ev.at - timedelta(minutes=hi):
                 prev = None
-        return MarketView(mint, at, self._bars_at(mint, at - self.candle_latency), ev, prev)
+        bars = self._bars_at(mint, at - self.candle_latency)
+        return MarketView(mint, at, bars, ev, prev, self.breadth(at))
+
+    def breadth(self, at: datetime) -> float | None:
+        """Share (%) of tokens eligible in their latest fresh evaluation at `at` whose 4h
+        return in that evaluation is positive; None with fewer than min_breadth_tokens."""
+        if at not in self._breadth:
+            fresh = timedelta(minutes=self.p.data.max_evaluation_age_minutes)
+            rets = []
+            for mint in self.evals:
+                ev = self._eval_at(mint, at)
+                if ev is None or not ev.eligible or at - ev.at > fresh:
+                    continue
+                r = ev.features.get("ret_4h_pct")
+                if r is not None:
+                    rets.append(r)
+            ok = len(rets) >= self.p.filters.min_breadth_tokens
+            self._breadth[at] = sum(r > 0 for r in rets) / len(rets) * 100 if ok else None
+        return self._breadth[at]
 
     def universe(self, at: datetime) -> list[str]:
         """Tokens eligible in their latest fresh evaluation at `at`."""

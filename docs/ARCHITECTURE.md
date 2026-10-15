@@ -177,3 +177,9 @@ The `paper_trading` collector job runs every minute. It reuses the strat-v1 rule
 ## 11. Phase 8 — dashboard
 
 The five screens of the plan (watchlist, early opportunities, trading signals, paper portfolio, performance analytics) lead the navigation. Phase 8 added the trading-signals screen (annotated candle charts), the performance page, portfolio exposure and the read-only analytics API (`/api/analytics/signals`, `/api/analytics/chart/{mint}`, `/api/analytics/performance`). Signal accuracy follows every paper signal, taken or rejected, on the candles with the backtest's exit rules. Full specification: `docs/DASHBOARD.md`.
+
+## 12. Strategy research (bt-v2, sweep-v1, paper-v2)
+
+- **Research options** for the strategies are all off by default, so strat-v1 decisions are unchanged (same replay digest): ATR exits, breakeven and trailing stops, regime and token-trend filters, entry-drift guard, slippage-aware sizing, losing-streak/drawdown breaker, and a random-entry baseline (`docs/STRATEGIES.md`, section 10).
+- **Sweeps** (`backtest/sweep.py`, `make sweep`) run on the host and read `autolp_dev`. They load the data once, test many variants in parallel processes, rank them on the development split and compare each with random entries (`docs/BACKTESTING.md`, section 11). Findings are logged in `docs/RESEARCH.md`.
+- **Parallel paper accounts** (`paper/accounts.py`): the `paper_trading` job ticks every listed account. `main` is the untouched control (`docs/PAPER_TRADING.md`, section 7).

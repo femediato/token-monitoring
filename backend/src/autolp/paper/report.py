@@ -1,4 +1,4 @@
-"""Paper trading report and reconciliation (paper-v1).
+"""Paper trading report and reconciliation (paper-v2).
 
 `reconcile` rebuilds every position and the account's cash from the stored fills and checks
 them against what the engine recorded: Phase 7's acceptance ("every simulated position can
@@ -155,6 +155,11 @@ def shortfall_pct(f: PaperFill) -> float | None:
     return (1 - f.fill_price / f.model_price) * 100
 
 
+def _ratio_of_sums(pairs: Sequence[tuple[float, float]]) -> float | None:
+    quoted = sum(q for _, q in pairs if q is not None)
+    return sum(c for c, q in pairs if q is not None) / quoted if quoted > 0 else None
+
+
 def execution_quality(
     positions: Sequence[PaperPosition], fills: dict[int, list[PaperFill]]
 ) -> dict[str, Any]:
@@ -178,7 +183,7 @@ def execution_quality(
     stops = [
         f
         for p in positions
-        if (p.exit_reason or "").startswith("stop")
+        if (p.exit_reason or "").startswith(("stop", "trail"))
         for f in _ok_fills(fills[p.id], "sell")
         if f.trigger_price
     ]
@@ -197,8 +202,9 @@ def execution_quality(
             "swap_failure_pct": base.swap_failure_pct,
         },
         "observed": {
-            # realised cost / quoted estimate, over fills with a positive estimate
-            "cost_multiplier": _mean([c / q for c, q in costs if q and q > 0]),
+            # total realised cost / total quoted estimate. A mean of per-fill ratios would
+            # be dominated by fills with a near-zero estimate.
+            "cost_multiplier": _ratio_of_sums(costs),
             "stop_slippage_pct": out["stop_slippage_pct"],
             "swap_failure_pct": failed / attempts * 100 if attempts else None,
         },

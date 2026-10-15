@@ -1,4 +1,4 @@
-"""Paper trading engine (paper-v1): strat-v1 decisions, executable-quote fills.
+"""Paper trading engine (paper-v2): strat-v1 decisions, executable-quote fills.
 
 Every minute (`PaperTrader.tick`):
 
@@ -18,6 +18,7 @@ All state is in the database and every step is committed as it happens, so the e
 continues where it stopped after a restart. Nothing is signed or sent: quotes only.
 """
 
+import zlib
 from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any
@@ -32,17 +33,22 @@ from autolp.db.base import utcnow
 from autolp.db.models import PaperAccount, PaperEquity, PaperEvent, PaperFill, PaperPosition, Token
 from autolp.log import get_logger
 from autolp.paper import quotes
+from autolp.paper.accounts import ACCOUNTS
 from autolp.paper.params import PAPER, PAPER_VERSION, PaperParams
 from autolp.paper.quotes import Leg, Quoter
 from autolp.strategies import rules
 from autolp.strategies.data import load_history
 from autolp.strategies.params import PARAMS, STRATEGY_VERSION, StrategyParams
-from autolp.strategies.risk import admit
+from autolp.strategies.risk import Breaker, admit, raised_stop
 from autolp.strategies.rules import Setup
 
 log = get_logger(__name__)
 Factory = async_sessionmaker[AsyncSession]
-LOCK_KEY = 0x6175746F6C70  # pg advisory lock: one paper engine at a time
+LOCK_KEY = 0x6175746F6C70  # pg advisory lock: one paper engine per account at a time
+
+
+def lock_key(account: str) -> int:
+    return LOCK_KEY if account == "main" else LOCK_KEY + zlib.crc32(account.encode())
 
 
 def mark_value(p: PaperPosition) -> float:
@@ -56,7 +62,8 @@ def exit_trigger(p: PaperPosition, price: float | None, at: datetime) -> str | N
     if p.pending_exit:
         return p.pending_exit
     if price is not None and price <= p.stop:
-        return "stop"
+        moved = p.initial_stop is not None and p.stop > p.initial_stop
+        return "trail" if moved else "stop"
     if price is not None and price >= p.target:
         return "target"
     if p.exit_by is not None and at >= p.exit_by:
@@ -79,13 +86,14 @@ class PaperTrader:
     async def tick(self, run_id: int, at: datetime | None = None) -> JobResult:
         at = (at or utcnow()).replace(microsecond=0)
         async with self.factory() as lock:
-            if not await lock.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": LOCK_KEY}):
+            key = lock_key(self.pp.account)
+            if not await lock.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": key}):
                 log.warning("paper_tick_skipped", reason="another engine holds the lock")
                 return JobResult()
             try:
                 return await self._tick(run_id, at)
             finally:
-                await lock.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": LOCK_KEY})
+                await lock.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
 
     async def _tick(self, run_id: int, at: datetime) -> JobResult:
         res = JobResult()
@@ -192,10 +200,14 @@ class PaperTrader:
             mark_ids = await self._raw(s, mark, run_id, res)
             if price is not None:
                 pos.last_price, pos.last_price_at = price, mark.quoted_at
+                if trigger is None:
+                    self._manage_stop(acct_id, at, pos, price, s)
             if trigger is None or leg is None:
                 return
             fill_ids = await self._raw(s, leg, run_id, res)
-            level = {"stop": pos.stop, "target": pos.target}.get(trigger.removesuffix("_retry"))
+            level = {"stop": pos.stop, "trail": pos.stop, "target": pos.target}.get(
+                trigger.removesuffix("_retry")
+            )
             fill = self._fill_row(pos.id, "sell", at, leg, [*mark_ids, *fill_ids], level)
             s.add(fill)
             ev = {"position_id": pos.id, "strategy": pos.strategy, "token_mint": pos.token_mint}
@@ -237,6 +249,29 @@ class PaperTrader:
                 )
             )  # fmt: skip
             res.rows_written += 1
+
+    def _manage_stop(
+        self, acct_id: int, at: datetime, pos: PaperPosition, price: float, s: AsyncSession
+    ) -> None:
+        """Breakeven and trailing stop (research options) on the minute marks. The raised
+        stop applies from the next tick; positions from before paper-v2 never move."""
+        m = rules.manage_params(self.p, pos.strategy)
+        if pos.initial_stop is None or pos.entry_price is None:
+            return
+        pos.high_price = max(pos.high_price or price, price)
+        new = raised_stop(
+            pos.stop, pos.initial_stop, pos.entry_price, pos.high_price, pos.atr or 0.0,
+            pos.entry_cost_pct or pos.quoted_cost_pct, m,
+        )  # fmt: skip
+        if new > pos.stop:
+            s.add(
+                self._event(
+                    acct_id, at, "stop_moved", position_id=pos.id, strategy=pos.strategy,
+                    token_mint=pos.token_mint, data={"from": pos.stop, "to": new,
+                                                     "high": pos.high_price},
+                )
+            )  # fmt: skip
+            pos.stop = new
 
     async def _cost_basis(self, s: AsyncSession, pid: int) -> float:
         """USDC paid for the entry plus its fee."""
@@ -334,6 +369,10 @@ class PaperTrader:
             book = await self._positions(s, acct_id, "open", "pending")
             equity = acct.cash_usd + sum(mark_value(x) for x in book if x.status == "open")
             day_start = await self._day_start_equity(s, acct_id, at)
+            paused = await self._breaker(s, acct_id, acct.starting_equity_usd, at)
+            if paused is not None:
+                s.add(self._event(acct_id, at, "reject", reason=paused, data=base, **key))
+                return None
             sizing = admit(
                 setup,
                 ev.features.get("liquidity_usd"),
@@ -366,6 +405,8 @@ class PaperTrader:
                 planned_risk_usd=sizing.planned_risk_usd,
                 sizing_binding=sizing.binding,
                 exit_attempts=0,
+                initial_stop=setup.stop,
+                atr=setup.atr,
             )
             s.add(pos)
             await s.flush()
@@ -383,6 +424,45 @@ class PaperTrader:
                 )
             )  # fmt: skip
             return pos.id
+
+    async def _breaker(
+        self, s: AsyncSession, acct_id: int, start_equity: float, at: datetime
+    ) -> str | None:
+        """Losing-streak / drawdown pause (research options), replayed from the stored
+        exits and equity marks so it survives restarts like everything else."""
+        r = self.p.risk
+        if r.max_consecutive_losses <= 0 and r.drawdown_pause_pct <= 0:
+            return None
+        b = Breaker(peak=start_equity)
+        exits = (
+            await s.execute(
+                select(PaperPosition.exit_at, PaperPosition.pnl_usd)
+                .where(PaperPosition.account_id == acct_id, PaperPosition.status == "closed")
+                .order_by(PaperPosition.exit_at)
+            )
+        ).all()
+        marks: list[tuple[datetime, float]] = []
+        if r.drawdown_pause_pct > 0:
+            marks = [
+                (m.at, m.equity_usd)
+                for m in (
+                    await s.execute(
+                        select(PaperEquity.at, PaperEquity.equity_usd)
+                        .where(PaperEquity.account_id == acct_id)
+                        .order_by(PaperEquity.at)
+                    )
+                ).all()
+            ]
+        events = sorted(
+            [(t, 0, v) for t, v in exits if t is not None] + [(t, 1, v) for t, v in marks],
+            key=lambda x: (x[0], x[1]),
+        )
+        for t, kind, v in events:
+            if kind == 0:
+                b.on_exit(t, v or 0.0, r)
+            else:
+                b.on_mark(t, v or 0.0, r)
+        return b.blocked(at)
 
     async def _open(
         self, acct_id: int, pid: int, at: datetime, run_id: int, res: JobResult
@@ -409,11 +489,22 @@ class PaperTrader:
                                 data={"error": leg.error}, **ev)
                 )  # fmt: skip
                 return
+            drift = self.p.risk.max_entry_drift_r
+            limit = pos.entry_ref + drift * (pos.entry_ref - pos.stop)
+            if drift > 0 and leg.ref_price is not None and leg.ref_price > limit:
+                # The quote is not taken: no cash moves (the fill row records the quote).
+                pos.status, pos.cancel_reason = "cancelled", "entry_drift"
+                s.add(
+                    self._event(acct_id, at, "cancel", reason="entry_drift",
+                                data={"ref_price": leg.ref_price, "limit": limit}, **ev)
+                )  # fmt: skip
+                return
             assert leg.usd is not None and leg.quoted_at is not None
             pos.status, pos.entry_at = "open", leg.quoted_at
             pos.entry_price, pos.entry_cost_pct, pos.qty = leg.ref_price, leg.cost_pct, leg.qty
             pos.exit_by = leg.quoted_at + timedelta(hours=pos.max_hold_hours)
             pos.last_price, pos.last_price_at = leg.ref_price, leg.quoted_at
+            pos.high_price = leg.ref_price
             await s.execute(
                 update(PaperAccount)
                 .where(PaperAccount.id == acct_id)
@@ -499,4 +590,17 @@ class PaperTrader:
 
 
 async def run_paper(factory: Factory, quoter: Quoter, run_id: int) -> JobResult:
-    return await PaperTrader(factory, quoter).tick(run_id)
+    """Tick every paper account (docs/PAPER_TRADING.md), `main` first. One account's
+    failure is logged and does not stop the others."""
+    total = JobResult()
+    for spec in ACCOUNTS:
+        try:
+            res = await PaperTrader(factory, quoter, spec.params(), spec.paper()).tick(run_id)
+        except Exception:
+            if spec.name == "main":
+                raise
+            log.exception("paper_account_failed", account=spec.name)
+            continue
+        total.rows_written += res.rows_written
+        total.api_credits_used += res.api_credits_used
+    return total

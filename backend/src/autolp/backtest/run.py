@@ -1,4 +1,4 @@
-"""Backtest CLI (bt-v1): run, print, store and optionally write the report files.
+"""Backtest CLI (bt-v2): run, print, store and optionally write the report files.
 
     python -m autolp.backtest.run                      # whole history, holdout sealed
     python -m autolp.backtest.run --days 90 --unseal-holdout --out reports/bt
@@ -12,7 +12,6 @@ selection data exists) and ends now. The holdout (the last third) is not simulat
 import argparse
 import asyncio
 import json
-from dataclasses import fields, is_dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -23,18 +22,7 @@ from autolp.backtest.params import BT, UNIVERSE_LABELS, BacktestParams
 from autolp.backtest.runner import backtest
 from autolp.config import get_settings
 from autolp.db.session import make_engine, make_sessionmaker
-from autolp.strategies.params import PARAMS, StrategyParams
-
-
-def override(obj: Any, path: str, value: Any) -> Any:
-    """Return a copy of a (nested, frozen) dataclass with `path` (a.b.c) set to value."""
-    head, _, rest = path.partition(".")
-    if isinstance(obj, dict):
-        return {**obj, head: override(obj[head], rest, value) if rest else value}
-    if not is_dataclass(obj) or head not in {f.name for f in fields(obj)}:
-        raise SystemExit(f"unknown parameter: {head}")
-    cur = getattr(obj, head)
-    return replace(obj, **{head: override(cur, rest, value) if rest else value})  # type: ignore[type-var]
+from autolp.strategies.params import PARAMS, StrategyParams, override
 
 
 def parse_sets(sets: list[str]) -> dict[str, Any]:

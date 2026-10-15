@@ -540,6 +540,10 @@ class PaperPosition(Base):
     last_price_at: Mapped[datetime | None]
     pending_exit: Mapped[str | None] = mapped_column(String(16))  # trigger whose swap failed
     exit_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    # Stop management (paper-v2; NULL before): `stop` above is the current stop.
+    initial_stop: Mapped[float | None] = mapped_column(Double)
+    atr: Mapped[float | None] = mapped_column(Double)  # at the signal, price units
+    high_price: Mapped[float | None] = mapped_column(Double)  # highest mark since entry
     # Exit
     exit_at: Mapped[datetime | None]
     exit_reason: Mapped[str | None] = mapped_column(String(24))

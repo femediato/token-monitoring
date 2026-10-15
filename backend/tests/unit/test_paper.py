@@ -1,4 +1,4 @@
-"""Paper trading (paper-v1): exit triggers, quote fills and reconciliation checks."""
+"""Paper trading (paper-v2): exit triggers, quote fills and reconciliation checks."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -78,3 +78,11 @@ def test_shortfall_sign_is_worse_for_us() -> None:
     assert shortfall_pct(fill("buy", fill_price=1.02, model_price=1.0)) == pytest.approx(2)
     assert shortfall_pct(fill("sell", fill_price=0.98, model_price=1.0)) == pytest.approx(2)
     assert shortfall_pct(fill("sell", fill_price=0.98)) is None
+
+
+def test_observed_cost_multiplier_is_a_ratio_of_sums() -> None:
+    from autolp.paper.report import _ratio_of_sums
+
+    # One fill with a near-zero estimate must not dominate: (0.4 + 0.05) / (0.4 + 0.01).
+    assert _ratio_of_sums([(0.4, 0.4), (0.05, 0.01)]) == pytest.approx(0.45 / 0.41)
+    assert _ratio_of_sums([]) is None

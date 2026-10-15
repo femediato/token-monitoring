@@ -129,3 +129,57 @@ async def test_interrupted_orders_are_cancelled_and_api_serves_the_audit_trail(
         assert c.get(f"/api/paper/positions/{old.id}").json()["issues"]
         assert c.get("/api/paper/positions/999999").status_code == 404
         assert c.get("/api/paper/events?kind=fill").json()["items"][0]["kind"] == "fill"
+
+
+async def test_a_research_account_trades_independently_with_a_trailing_stop(
+    factory: Factory,
+) -> None:
+    from autolp.paper.accounts import AccountSpec
+
+    trader, q = await setup(factory, "A")
+    trail = AccountSpec(
+        "trail-test",
+        "test",
+        {
+            "momentum.exit.take_profit_pct": 100,  # target out of reach
+            "momentum.manage.breakeven_at_r": 1,
+        },
+    )
+    research = PaperTrader(factory, q, trail.params(), trail.paper())
+    for t in (trader, research):
+        await tick(t, q, SIGNAL)
+    main_pos, res_pos = await positions(factory)
+    assert main_pos.account_id != res_pos.account_id
+    assert res_pos.initial_stop == res_pos.stop and res_pos.high_price is not None
+    q.prices["A"] = 1.06 * 1.10  # 1.4 R up: the research stop moves to breakeven
+    for t in (trader, research):
+        await tick(t, q, SIGNAL + timedelta(minutes=1))
+    main_pos, res_pos = await positions(factory)
+    assert main_pos.stop == main_pos.initial_stop  # main never moves its stop
+    assert res_pos.stop > res_pos.entry_price  # type: ignore[operator]
+    q.prices["A"] = 1.04  # back below the entry: research exits on the raised stop
+    for t in (trader, research):
+        await tick(t, q, SIGNAL + timedelta(minutes=2))
+    main_pos, res_pos = await positions(factory)
+    assert main_pos.status == "open"
+    assert res_pos.status == "closed" and res_pos.exit_reason == "trail"
+    async with factory() as s:
+        moved = await s.scalar(
+            select(func.count()).select_from(PaperEvent).where(PaperEvent.kind == "stop_moved")
+        )
+        assert moved == 1
+        assert await rep.account(s, "trail-test") is not None
+
+
+async def test_entry_drift_guard_cancels_without_moving_cash(factory: Factory) -> None:
+    from autolp.paper.accounts import AccountSpec
+
+    _, q = await setup(factory, "A")
+    q.prices["A"] = 1.05 * 1.05  # 0.7 R above the signal close at the quote
+    spec = AccountSpec("drift-test", "test", {"risk.max_entry_drift_r": 0.25})
+    await tick(PaperTrader(factory, q, spec.params(), spec.paper()), q, SIGNAL)
+    [pos] = await positions(factory)
+    assert pos.status == "cancelled" and pos.cancel_reason == "entry_drift"
+    async with factory() as s:
+        acct = await rep.account(s, "drift-test")
+        assert acct is not None and acct.cash_usd == acct.starting_equity_usd

@@ -13,7 +13,7 @@ from typing import Any
 
 from autolp.backtest.metrics import trade_costs_usd
 
-STOP_PREFIX = "stop"
+STOP_PREFIX = ("stop", "trail")  # exits that fill at or past the stop
 
 
 def _hours(t: dict[str, Any]) -> float:
