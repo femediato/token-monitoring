@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
-from autolp.strategies.bars import Bar, atr, ema, floor_hour, hour_bar
+from autolp.strategies.bars import Bar, atr, ema, floor_hour, hour_bar, rsi
 from autolp.strategies.params import PARAMS, ExitParams, ManageParams, StrategyParams
 
 STRATEGIES = ("momentum", "pullback", "range")
@@ -99,13 +99,19 @@ def _filters(sig: Signal, view: MarketView, p: StrategyParams) -> None:
     if fp.min_breadth_pct > 0:
         sig.values["breadth_pct"] = view.breadth
         sig.checks["regime"] = None if view.breadth is None else view.breadth >= fp.min_breadth_pct
-    if fp.min_ret_4h_pct is not None or fp.max_ret_4h_pct is not None:
+    bounds = (
+        ("token_trend", "ret_4h_pct", fp.min_ret_4h_pct, fp.max_ret_4h_pct),
+        ("token_trend_1h", "ret_1h_pct", fp.min_ret_1h_pct, fp.max_ret_1h_pct),
+    )
+    for check, key, lo, hi in bounds:
+        if lo is None and hi is None:
+            continue
         ev = view.evaluation
-        r4 = ev.features.get("ret_4h_pct") if ev else None
-        sig.values["ret_4h_pct"] = r4
-        lo = fp.min_ret_4h_pct if fp.min_ret_4h_pct is not None else float("-inf")
-        hi = fp.max_ret_4h_pct if fp.max_ret_4h_pct is not None else float("inf")
-        sig.checks["token_trend"] = None if r4 is None else lo <= r4 <= hi
+        r = ev.features.get(key) if ev else None
+        sig.values[key] = r
+        lo_ = lo if lo is not None else float("-inf")
+        hi_ = hi if hi is not None else float("inf")
+        sig.checks[check] = None if r is None else lo_ <= r <= hi_
 
 
 def _atr(sig: Signal, bars: list[Bar], p: StrategyParams, needed: bool) -> float:
@@ -317,6 +323,51 @@ def range_trade(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
     return _finish(sig, view, stop, target, rp.max_hold_hours, a)
 
 
+def _no_risk_warnings(sig: Signal, view: MarketView) -> None:
+    f = view.evaluation.features if view.evaluation else {}
+    flags, label = f.get("risk_flags"), f.get("organic_label")
+    # Missing safety inputs are never read as "no warning".
+    sig.checks["no_risk_warnings"] = (
+        None if flags is None or label is None else not flags and label != "low"
+    )
+
+
+def reversal(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
+    """D (research): the close is min-max % below the highest high of the lookback, with
+    optional oversold RSI, recovery candle and buying share, and no risk warnings."""
+    rp = p.reversal
+    sig = Signal("reversal", view.mint, view.at)
+    _common(sig, view, p)
+    bars = list(view.bars)
+    if len(bars) >= rp.lookback_candles:
+        hi = max(b.high for b in bars[-rp.lookback_candles :])
+        drop = (hi - bars[-1].close) / hi * 100 if hi > 0 else 0.0
+        sig.values.update(local_high=hi, drop_pct=round(drop, 3))
+        sig.checks["drop"] = rp.min_drop_pct <= drop <= rp.max_drop_pct
+    else:
+        sig.checks["drop"] = None
+    if rp.max_rsi > 0:
+        r = rsi([b.close for b in bars], rp.rsi_candles)
+        sig.values["rsi"] = None if r is None else round(r, 2)
+        sig.checks["oversold"] = None if r is None else r <= rp.max_rsi
+    if rp.confirm:
+        if len(bars) >= 2 and _contiguous(bars[-2], bars[-1]):
+            last, before = bars[-1], bars[-2]
+            sig.checks["recovery_candle"] = last.bullish and last.close > before.high
+        else:
+            sig.checks["recovery_candle"] = None
+    if rp.min_buy_share > 0:
+        ev = view.evaluation
+        share = ev.features.get("buy_share_1h") if ev else None
+        sig.values["buy_share_1h"] = share
+        sig.checks["buying"] = None if share is None else share >= rp.min_buy_share
+    _no_risk_warnings(sig, view)
+    if not bars:
+        return sig
+    stop, target, a = _levels(sig, bars, rp.exit, rp.manage, p)
+    return _finish(sig, view, stop, target, rp.exit.max_hold_hours, a)
+
+
 def random_entry(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
     """Research baseline: a deterministic pseudo-random entry on prob_pct of the candles,
     with the shared checks, the filters and the configured exits."""
@@ -334,7 +385,13 @@ def random_entry(view: MarketView, p: StrategyParams = PARAMS) -> Signal:
     return _finish(sig, view, stop, target, rp.exit.max_hold_hours, a)
 
 
-RULES = {"momentum": momentum, "pullback": pullback, "range": range_trade, "random": random_entry}
+RULES = {
+    "momentum": momentum,
+    "pullback": pullback,
+    "range": range_trade,
+    "reversal": reversal,
+    "random": random_entry,
+}
 
 
 def manage_params(p: StrategyParams, strategy: str) -> ManageParams:

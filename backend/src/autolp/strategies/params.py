@@ -84,6 +84,23 @@ class RangeParams:
 
 
 @dataclass(frozen=True)
+class ReversalParams:
+    """Research strategy D, never enabled live: buy a token after a sharp fall from its
+    recent high ("buy the dip" / mean reversion), betting on a short bounce. Off by default
+    (not in `enabled`); docs/STRATEGIES.md, section 11."""
+
+    lookback_candles: int = 48  # the fall is measured from the highest high of 4 hours
+    min_drop_pct: float = 15
+    max_drop_pct: float = 40  # deeper falls are more often failures than dips
+    rsi_candles: int = 14
+    max_rsi: float = 0  # 0 = off; else RSI of the 5-minute closes must be <= this
+    confirm: bool = False  # require a bullish candle closing above the previous high
+    min_buy_share: float = 0  # 0 = off; buy share of the last hour (evaluation) >= this
+    exit: ExitParams = field(default_factory=lambda: ExitParams(6, 6, 2))
+    manage: ManageParams = field(default_factory=ManageParams)
+
+
+@dataclass(frozen=True)
 class RandomParams:
     """Research baseline, never enabled live: enter at random (a deterministic hash of the
     token and the candle) with the shared checks, filters and the given exits. Comparing a
@@ -107,6 +124,9 @@ class FilterParams:
     # The token's own 4h return must lie in [min, max]; None = no bound.
     min_ret_4h_pct: float | None = None
     max_ret_4h_pct: float | None = None
+    # The same for the 1h return (ret_1h_pct): e.g. skip tokens that just pumped.
+    min_ret_1h_pct: float | None = None
+    max_ret_1h_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +178,7 @@ class StrategyParams:
     risk: RiskParams = field(default_factory=RiskParams)
     data: DataParams = field(default_factory=DataParams)
     random: RandomParams = field(default_factory=RandomParams)
+    reversal: ReversalParams = field(default_factory=ReversalParams)
     filters: FilterParams = field(default_factory=FilterParams)
     atr_candles: int = 48  # ATR: mean true range of the last 4 hours of 5-minute candles
     enabled: tuple[str, ...] = ("momentum", "pullback", "range")

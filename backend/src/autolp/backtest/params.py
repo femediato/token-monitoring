@@ -116,4 +116,6 @@ UNIVERSE_LABELS = {
     "volume": "Top 30 by 24h volume",
     "random": "Random, matched by size/liquidity",
     "early": "Our selection + early-alert entries",
+    # Research sweeps only (backtest.data.load(research=True)).
+    "liquid": "Any liquid token with candles (eligible or not)",
 }

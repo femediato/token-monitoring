@@ -103,7 +103,26 @@ Added for the strategy research sweeps (`docs/BACKTESTING.md`, section 11). Ever
 | Trailing stop | `<strategy>.manage.trail_atr`, `trail_after_r` | once the high is `trail_after_r` R up, the stop trails `trail_atr` × ATR below the highest high. Raised only after a candle completes, so it applies from the next candle; an exit on a raised stop is `trail` and pays stop slippage |
 | Market regime | `filters.min_breadth_pct`, `min_breadth_tokens` | new check `regime`: the share of eligible tokens (latest fresh evaluation) with a positive `ret_4h_pct` must be at least this. Fewer than `min_breadth_tokens` tokens → missing → no trade |
 | Token trend | `filters.min_ret_4h_pct`, `max_ret_4h_pct` | new check `token_trend`: the token's own 4h return within the bounds; missing → no trade |
+| Token 1h trend | `filters.min_ret_1h_pct`, `max_ret_1h_pct` | new check `token_trend_1h`: the same for the 1h return, e.g. skip tokens that just pumped; missing → no trade |
 | Entry drift guard | `risk.max_entry_drift_r` | an entry whose fill price is more than this × R above the signal close is cancelled (`entry_drift`) |
 | Slippage-aware sizing | `risk.expected_stop_slippage_pct` | sizing budgets for the stop overshoot: loss per $ = stop distance + round-trip cost + this |
 | Breaker | `risk.max_consecutive_losses`, `drawdown_pause_pct`, `pause_hours` | no new entries for `pause_hours` after that many losses in a row (`loss_streak`) or after equity falls that far below its peak (`drawdown_pause`) |
 | Random entries | `enabled = ["random"]`, `random.prob_pct`, `random.exit`, `random.manage` | research baseline only: enters on a deterministic pseudo-random `prob_pct` of candles (hash of seed, token and candle), with the shared checks, the filters and the given exits |
+
+## 11. Strategy D — Reversal (research only)
+
+"Buy the dip": buy a token after a sharp fall from its recent high, betting on a short bounce. Research only: it is not in `enabled`, so neither the live job nor `main` trades it. It is tested in the sweeps (round 2, `docs/RESEARCH.md`) and would need its own approval before any paper account trades it.
+
+| Check | Rule (parameters in `strategies/params.py`, `ReversalParams`) |
+|---|---|
+| Shared checks | section 2, plus any filters (section 10) |
+| `drop` | the last close is `min_drop_pct` (15) to `max_drop_pct` (40) % below the highest high of the last `lookback_candles` (48 = 4 hours); fewer candles → missing |
+| `oversold` (optional) | `max_rsi` > 0: Wilder RSI(`rsi_candles` = 14) of the 5-minute closes ≤ `max_rsi` |
+| `recovery_candle` (optional) | `confirm`: the last candle is bullish and closes above the previous candle's high |
+| `buying` (optional) | `min_buy_share` > 0: the evaluation's 1h buy share ≥ this |
+| `no_risk_warnings` | as strategy A |
+
+Exits: `reversal.exit`, default +6% target, −6% stop, 2-hour maximum hold (or ATR exits, section 10), and `reversal.manage` for breakeven/trailing.
+
+Known approaches this draws on: short-term oversold bounces (RSI-2 / RSI-14 thresholds, Connors-style), Bollinger-band or z-score reversion to a moving average, and capitulation reversals (a sharp fall on high volume, then selling exhaustion and a reversal candle). The common failure mode in meme coins is the falling knife: a token that falls because it is dying keeps falling. Hence the cap on the fall, the safety checks, and short holds.
+

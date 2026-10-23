@@ -1,0 +1,454 @@
+{
+ "name": "round2",
+ "description": "Round 2 (2026-10-23): strat-v1 on 13 days; does the token selection help (selection vs liquid, random, volume, mcap universes); skipping tokens that just pumped; and strategy D, reversal (buy after a sharp fall), against random entries under the same exits. Defined after seeing 13 days of paper losses and the forward-return study in docs/RESEARCH.md, so this window is in-sample for every idea here.",
+ "scenarios": [
+  "base",
+  "paper",
+  "stress"
+ ],
+ "rank_scenario": "paper",
+ "min_trades": 20,
+ "base": {},
+ "variants": [
+  {
+   "name": "v1 all (current)",
+   "set": {}
+  },
+  {
+   "name": "v1 momentum only",
+   "set": {
+    "strategy.enabled": [
+     "momentum"
+    ]
+   }
+  },
+  {
+   "name": "v1 pullback only",
+   "set": {
+    "strategy.enabled": [
+     "pullback"
+    ]
+   }
+  },
+  {
+   "name": "v1 range only",
+   "set": {
+    "strategy.enabled": [
+     "range"
+    ]
+   }
+  },
+  {
+   "name": "v1 momentum+pullback",
+   "set": {
+    "strategy.enabled": [
+     "momentum",
+     "pullback"
+    ]
+   }
+  },
+  {
+   "name": "cash (no trades)",
+   "set": {
+    "strategy.enabled": []
+   }
+  },
+  {
+   "name": "random 15/7 4h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 15,
+    "strategy.random.exit.stop_loss_pct": 7,
+    "strategy.random.exit.max_hold_hours": 4
+   }
+  },
+  {
+   "name": "random 6/6 1h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 6,
+    "strategy.random.exit.stop_loss_pct": 6,
+    "strategy.random.exit.max_hold_hours": 1
+   }
+  },
+  {
+   "name": "random 6/6 2h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 6,
+    "strategy.random.exit.stop_loss_pct": 6,
+    "strategy.random.exit.max_hold_hours": 2
+   }
+  },
+  {
+   "name": "random 6/6 4h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 6,
+    "strategy.random.exit.stop_loss_pct": 6,
+    "strategy.random.exit.max_hold_hours": 4
+   }
+  },
+  {
+   "name": "v1 all [liquid]",
+   "set": {},
+   "universe": "liquid"
+  },
+  {
+   "name": "random 15/7 4h [liquid]",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 15,
+    "strategy.random.exit.stop_loss_pct": 7,
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "universe": "liquid"
+  },
+  {
+   "name": "v1 all [random]",
+   "set": {},
+   "universe": "random"
+  },
+  {
+   "name": "random 15/7 4h [random]",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 15,
+    "strategy.random.exit.stop_loss_pct": 7,
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "universe": "random"
+  },
+  {
+   "name": "v1 all [volume]",
+   "set": {},
+   "universe": "volume"
+  },
+  {
+   "name": "random 15/7 4h [volume]",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 15,
+    "strategy.random.exit.stop_loss_pct": 7,
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "universe": "volume"
+  },
+  {
+   "name": "v1 all [mcap]",
+   "set": {},
+   "universe": "mcap"
+  },
+  {
+   "name": "random 15/7 4h [mcap]",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 15,
+    "strategy.random.exit.stop_loss_pct": 7,
+    "strategy.random.exit.max_hold_hours": 4
+   },
+   "universe": "mcap"
+  },
+  {
+   "name": "random 6/6 2h [liquid]",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.take_profit_pct": 6,
+    "strategy.random.exit.stop_loss_pct": 6,
+    "strategy.random.exit.max_hold_hours": 2
+   },
+   "universe": "liquid"
+  }
+ ],
+ "groups": [
+  {
+   "prefix": "v1 skip 1h pump",
+   "grid": {
+    "strategy.filters.max_ret_1h_pct": [
+     3,
+     5,
+     10,
+     15
+    ]
+   },
+   "baseline": "v1 all (current)"
+  },
+  {
+   "prefix": "v1 skip 4h pump",
+   "grid": {
+    "strategy.filters.max_ret_4h_pct": [
+     5,
+     10,
+     15,
+     25
+    ]
+   },
+   "baseline": "v1 all (current)"
+  },
+  {
+   "prefix": "mom+pb skip 1h pump",
+   "set": {
+    "strategy.enabled": [
+     "momentum",
+     "pullback"
+    ]
+   },
+   "grid": {
+    "strategy.filters.max_ret_1h_pct": [
+     3,
+     5,
+     10,
+     15
+    ]
+   },
+   "baseline": "v1 momentum+pullback"
+  },
+  {
+   "prefix": "reversal 6/6 1h",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.exit.max_hold_hours": 1
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     10,
+     15,
+     20,
+     25
+    ],
+    "strategy.reversal.confirm": [
+     false,
+     true
+    ]
+   },
+   "baseline": "random 6/6 1h"
+  },
+  {
+   "prefix": "reversal 6/6 2h",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.exit.max_hold_hours": 2
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     10,
+     15,
+     20,
+     25
+    ],
+    "strategy.reversal.confirm": [
+     false,
+     true
+    ]
+   },
+   "baseline": "random 6/6 2h"
+  },
+  {
+   "prefix": "reversal 6/6 4h",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.exit.max_hold_hours": 4
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     10,
+     15,
+     20,
+     25
+    ],
+    "strategy.reversal.confirm": [
+     false,
+     true
+    ]
+   },
+   "baseline": "random 6/6 4h"
+  },
+  {
+   "prefix": "reversal 2h",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.min_drop_pct": 15,
+    "strategy.reversal.exit.max_hold_hours": 2
+   },
+   "grid": {
+    "strategy.reversal.exit.take_profit_pct": [
+     4,
+     6,
+     10
+    ],
+    "strategy.reversal.exit.stop_loss_pct": [
+     4,
+     6,
+     10
+    ]
+   },
+   "baseline_group": "random 2h"
+  },
+  {
+   "prefix": "random 2h",
+   "set": {
+    "strategy.enabled": [
+     "random"
+    ],
+    "strategy.random.exit.max_hold_hours": 2
+   },
+   "grid": {
+    "strategy.random.exit.take_profit_pct": [
+     4,
+     6,
+     10
+    ],
+    "strategy.random.exit.stop_loss_pct": [
+     4,
+     6,
+     10
+    ]
+   }
+  },
+  {
+   "prefix": "reversal rsi",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.min_drop_pct": 10
+   },
+   "grid": {
+    "strategy.reversal.max_rsi": [
+     20,
+     25,
+     30
+    ],
+    "strategy.reversal.exit.max_hold_hours": [
+     1,
+     2
+    ]
+   },
+   "baseline": "random 6/6 2h"
+  },
+  {
+   "prefix": "reversal buying",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.min_drop_pct": 10
+   },
+   "grid": {
+    "strategy.reversal.min_buy_share": [
+     0.5,
+     0.55,
+     0.6
+    ]
+   },
+   "baseline": "random 6/6 2h"
+  },
+  {
+   "prefix": "reversal atr 2h",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.min_drop_pct": 15,
+    "strategy.reversal.exit.mode": "atr"
+   },
+   "grid": {
+    "strategy.reversal.exit.atr_mult": [
+     1.5,
+     2,
+     3
+    ],
+    "strategy.reversal.exit.reward_risk": [
+     1,
+     1.5,
+     2
+    ]
+   },
+   "baseline": "random 6/6 2h"
+  },
+  {
+   "prefix": "reversal deep",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.max_drop_pct": 70
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     30,
+     40
+    ]
+   },
+   "baseline": "random 6/6 2h"
+  },
+  {
+   "prefix": "reversal 6/6 2h [liquid]",
+   "universe": "liquid",
+   "set": {
+    "strategy.enabled": [
+     "reversal"
+    ],
+    "strategy.reversal.exit.max_hold_hours": 2
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     10,
+     15,
+     20,
+     25
+    ],
+    "strategy.reversal.confirm": [
+     false,
+     true
+    ]
+   },
+   "baseline": "random 6/6 2h [liquid]"
+  },
+  {
+   "prefix": "reversal+v1",
+   "set": {
+    "strategy.enabled": [
+     "momentum",
+     "pullback",
+     "range",
+     "reversal"
+    ]
+   },
+   "grid": {
+    "strategy.reversal.min_drop_pct": [
+     10,
+     15,
+     20
+    ]
+   },
+   "baseline": "v1 all (current)"
+  }
+ ]
+}

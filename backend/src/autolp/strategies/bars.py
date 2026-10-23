@@ -76,3 +76,19 @@ def atr(bars: list[Bar] | tuple[Bar, ...], n: int) -> float | None:
     for prev, b in zip(window, window[1:], strict=False):
         total += max(b.high, prev.close) - min(b.low, prev.close)
     return total / n
+
+
+def rsi(values: list[float], n: int) -> float | None:
+    """Wilder's relative strength index of the last value (0-100); None with fewer than
+    n + 1 values. All gains -> 100, all losses -> 0, no change -> 50."""
+    if n <= 0 or len(values) < n + 1:
+        return None
+    diffs = [b - a for a, b in zip(values, values[1:], strict=False)]
+    gain = sum(max(d, 0) for d in diffs[:n]) / n
+    loss = sum(max(-d, 0) for d in diffs[:n]) / n
+    for d in diffs[n:]:
+        gain = (gain * (n - 1) + max(d, 0)) / n
+        loss = (loss * (n - 1) + max(-d, 0)) / n
+    if gain == loss == 0:
+        return 50.0
+    return 100.0 if loss == 0 else 100 - 100 / (1 + gain / loss)

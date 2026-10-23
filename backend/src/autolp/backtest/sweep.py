@@ -4,7 +4,7 @@
 
 A grid file names variants as parameter overrides (the same `strategy.x.y` keys as
 `backtest.run --set`). The data is loaded once; every variant then runs the decision
-engine on the `selection` universe under each execution scenario, in parallel processes.
+engine on its universe (default `selection`) under each execution scenario, in parallel processes.
 The simulation is pure, so the same grid over the same data gives the same digests
 whether it runs serially or in parallel.
 
@@ -21,11 +21,14 @@ Grid format:
 
     {"name": "round1", "description": "...",
      "scenarios": ["base", "paper", "stress"], "rank_scenario": "paper",
-     "min_trades": 10,
+     "min_trades": 10, "universe": "selection",                   # default universe
      "base": {"strategy.risk.daily_loss_stop_pct": 3.0},          # applied to every variant
-     "variants": [{"name": "...", "set": {...}, "baseline": "..."}],
+     "variants": [{"name": "...", "set": {...}, "baseline": "...", "universe": "liquid"}],
      "groups": [{"prefix": "...", "set": {...}, "baseline": "...", "baseline_group": "...",
-                 "grid": {"strategy.momentum.exit.atr_mult": [2, 3, 4], ...}}]}
+                 "universe": "...", "grid": {"strategy.momentum.exit.atr_mult": [2, 3], ...}}]}
+
+A variant trades one universe (backtest/params.py UNIVERSE_LABELS; `early` excluded):
+`selection` by default, or e.g. `liquid` / `random` to test the token selection itself.
 
 A group expands into the cartesian product of its `grid` axes. With `baseline_group`, each
 point's baseline is the point of that group with the same axis labels (e.g. a random-entry
@@ -49,14 +52,14 @@ from typing import Any
 
 from autolp.backtest.data import BacktestData, first_evaluation_at, load
 from autolp.backtest.metrics import summarize
-from autolp.backtest.params import BACKTEST_VERSION, BT
+from autolp.backtest.params import BACKTEST_VERSION, BT, UNIVERSE_LABELS
 from autolp.backtest.run import apply
 from autolp.backtest.runner import run_all, splits
 from autolp.config import get_settings
 from autolp.db.session import make_engine, make_sessionmaker
 from autolp.strategies.params import PARAMS, STRATEGY_VERSION
 
-SWEEP_VERSION = "sweep-v1"
+SWEEP_VERSION = "sweep-v2"
 # Inputs the loaded data depends on: a variant cannot change them.
 FROZEN_PREFIXES = ("strategy.data.", "strategy.filters.min_breadth_tokens", "backtest.")
 
@@ -68,6 +71,7 @@ class Variant:
     group: str | None = None
     baseline: str | None = None
     axes: dict[str, int] = field(default_factory=dict)  # axis -> index in the group grid
+    universe: str = "selection"
 
 
 def _short(key: str) -> str:
@@ -83,7 +87,15 @@ def expand(grid: dict[str, Any]) -> list[Variant]:
     base = dict(grid.get("base", {}))
     out: list[Variant] = []
     for v in grid.get("variants", []):
-        out.append(Variant(v["name"], {**base, **v.get("set", {})}, None, v.get("baseline")))
+        out.append(
+            Variant(
+                v["name"],
+                {**base, **v.get("set", {})},
+                None,
+                v.get("baseline"),
+                universe=v.get("universe", grid.get("universe", "selection")),
+            )
+        )
     for g in grid.get("groups", []):
         axes = list(g.get("grid", {}).items())
         for idx in itertools.product(*(range(len(vals)) for _, vals in axes)):
@@ -98,6 +110,7 @@ def expand(grid: dict[str, Any]) -> list[Variant]:
                     g["prefix"],
                     twin or g.get("baseline"),
                     {k: i for (k, _), i in zip(axes, idx, strict=True)},
+                    g.get("universe", grid.get("universe", "selection")),
                 )
             )
     names = [v.name for v in out]
@@ -108,6 +121,8 @@ def expand(grid: dict[str, Any]) -> list[Variant]:
         frozen = [k for k in v.overrides if k.startswith(FROZEN_PREFIXES)]
         if frozen:
             raise SystemExit(f"{v.name}: a sweep cannot change {frozen} (reload the data)")
+        if v.universe not in UNIVERSE_LABELS or v.universe == "early":
+            raise SystemExit(f"{v.name}: unknown universe {v.universe!r}")
         if v.baseline is not None and v.baseline not in names:
             raise SystemExit(f"{v.name}: unknown baseline {v.baseline!r}")
     return out
@@ -122,8 +137,9 @@ def run_variant(v: Variant, scenarios: Sequence[str]) -> dict[str, Any]:
     data = _DATA
     sp, bp = apply(v.overrides)
     parts = splits(data.start, data.end, bp)[:2]  # holdout sealed
-    results = run_all(data, [("selection", s) for s in scenarios], data.start, parts[1].end, sp, bp)
-    out: dict[str, Any] = {"name": v.name, "scenarios": {}}
+    specs = [(v.universe, s) for s in scenarios]
+    results = run_all(data, specs, data.start, parts[1].end, sp, bp)
+    out: dict[str, Any] = {"name": v.name, "universe": v.universe, "scenarios": {}}
     for (_, sname), res in results.items():
         eng = res.engine
         metrics = {s.name: summarize(eng.closed, res.curve, s.start, s.end) for s in parts}
@@ -186,6 +202,7 @@ def rank(
         row: dict[str, Any] = {
             "name": v.name,
             "group": v.group,
+            "universe": v.universe,
             "dev_trades": dev["trades"],
             "dev_return_pct": dev["net_return_pct"],
             "dev_pf": dev["profit_factor"],
@@ -261,14 +278,14 @@ def markdown(report: dict[str, Any]) -> str:
         "trust a variant only if its neighbours, its validation result and the stress "
         "scenario agree, and it beats its random-entry baseline.",
         "",
-        "| # | Variant | Dev trades | Dev return % | Dev PF | Dev exp. % | Dev max DD % | "
+        "| # | Variant | Universe | Dev trades | Dev return % | Dev PF | Dev exp. % | Dev max DD % | "
         "vs random (exp. pp) | Worst neighbour % | Stress dev % | Val trades | Val return % |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for x in report["ranking"]:
         flag = "" if x["enough_trades"] else " (few trades)"
         lines.append(
-            f"| {x['rank']} | {x['name']}{flag} | {x['dev_trades']} | {_f(x['dev_return_pct'])} | "
+            f"| {x['rank']} | {x['name']}{flag} | {x['universe']} | {x['dev_trades']} | {_f(x['dev_return_pct'])} | "
             f"{_f(x['dev_pf'], '{:.2f}')} | {_f(x['dev_expectancy_pct'])} | "
             f"{_f(x['dev_max_dd_pct'], '{:.1f}')} | {_f(x['uplift_expectancy_pct'])} | "
             f"{_f(x['worst_neighbour_return_pct'])} | {_f(x['stress_dev_return_pct'])} | "
@@ -285,7 +302,7 @@ def build_report(
     parts = splits(data.start, data.end, BT)
     h = hashlib.sha256(data.input_digest.encode())
     for v, r in zip(variants, results, strict=True):
-        h.update(json.dumps([v.name, v.overrides], sort_keys=True, default=str).encode())
+        h.update(json.dumps([v.name, v.universe, v.overrides], sort_keys=True).encode())
         for sname in sorted(r["scenarios"]):
             h.update(f"|{sname}|{r['scenarios'][sname]['digest']}\n".encode())
     return {
@@ -303,7 +320,9 @@ def build_report(
         },
         "input_digest": data.input_digest,
         "sweep_digest": h.hexdigest(),
-        "variants": [{"name": v.name, "overrides": v.overrides} for v in variants],
+        "variants": [
+            {"name": v.name, "universe": v.universe, "overrides": v.overrides} for v in variants
+        ],
         "ranking": rank(variants, results, scenario, int(grid.get("min_trades", 10))),
         "results": results,
     }
@@ -318,7 +337,7 @@ async def _load(start: datetime | None, end: datetime | None) -> BacktestData:
                 raise SystemExit("no model evaluations stored yet")
             end = end or datetime.now(UTC).replace(second=0, microsecond=0)
             start = max(start or first, first)
-            return await load(session, start, end, PARAMS, BT)
+            return await load(session, start, end, PARAMS, BT, research=True)
     finally:
         await db.dispose()
 

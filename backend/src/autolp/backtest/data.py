@@ -80,7 +80,11 @@ async def load(
     end: datetime,
     sp: StrategyParams = PARAMS,
     bp: BacktestParams = BT,
+    *,
+    research: bool = False,
 ) -> BacktestData:
+    """With `research`, also the `liquid` universe (research sweeps only, so stored
+    backtests keep their inputs and digests)."""
     v, n = MODEL_VERSION, bp.universe.size
     lo = start - timedelta(hours=1)  # so every universe has a set at `start`
 
@@ -147,6 +151,22 @@ async def load(
         "random": random_timeline(selection, cands, bp),
         "early": selection,
     }
+    if research:
+        # Every baseline candidate (eligible or not) with 5-minute candles in the window:
+        # does the eligibility filter help, or would any liquid token do as well?
+        with_candles = set(
+            await session.scalars(
+                text(
+                    "SELECT DISTINCT token_mint FROM candles_5m "
+                    "WHERE is_complete AND bucket BETWEEN :lo AND :hi"
+                ),
+                {"lo": lo, "hi": end},
+            )
+        )
+        liquid = {
+            t: sorted(c.mint for c in cs if c.mint in with_candles) for t, cs in cands.items()
+        }
+        timelines["liquid"] = ranked_timeline(liquid, 10**6)
     events = await session.execute(
         text(
             """

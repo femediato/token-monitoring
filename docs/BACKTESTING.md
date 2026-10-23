@@ -138,7 +138,7 @@ The same window over the same stored data gives the same two digests. Stored dat
 - **Primary pool.** Candles come from each token's current primary pool, as in the strategy replay.
 - **Liquidity.** Liquidity for sizing comes from the evaluation (up to 20 minutes old). The cost estimate is valid only up to the $1,000 quoted size, which also caps every position.
 
-## 11. Strategy research sweeps (sweep-v1)
+## 11. Strategy research sweeps (sweep-v2)
 
 ```
 make sweep GRID=round1 [END=2026-10-15T17:00]   # runs on the host against autolp_dev
@@ -147,7 +147,7 @@ make sweep GRID=round1 [END=2026-10-15T17:00]   # runs on the host against autol
 A sweep runs many variants of the strategies on the same stored data and ranks them. Code: `backtest/sweep.py`; grids: `research/grids/*.json` (versioned with the code); output: `reports/sweeps/<grid>-<end>/report.{md,json}` (not committed: reproducible from the grid, the code and the data).
 
 - **Variants** are parameter overrides, with the same keys as `--set`. A group expands into the cartesian product of its axes. Variants cannot change data inputs (`strategy.data.*`, `backtest.*`), because the data is loaded once.
-- **Every variant** runs on the `selection` universe under the `base`, `paper` and `stress` scenarios. Processes run in parallel; the simulation is pure, so serial and parallel runs give the same digests.
+- **Every variant** runs on its universe (`selection` unless the grid says otherwise) under the `base`, `paper` and `stress` scenarios. sweep-v2 added per-variant universes, including the research-only `liquid` universe: every baseline candidate (no critical failure, ≥ $300k market cap, ≥ $50k liquidity) that has 5-minute candles in the window, eligible or not. It tests whether the eligibility filter helps. Stored backtests (`make backtest`) do not load it, so their inputs and digests are unchanged. Processes run in parallel; the simulation is pure, so serial and parallel runs give the same digests.
 - **Research options** (`docs/STRATEGIES.md`, section 10) are off by default, so the strat-v1 decisions are unchanged (same replay digest).
 
 **Multiple-testing discipline.** With a few days of data and a hundred variants, the best-looking variant is partly luck. So:

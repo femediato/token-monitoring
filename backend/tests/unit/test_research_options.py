@@ -10,7 +10,7 @@ from autolp.backtest.data import BacktestData
 from autolp.backtest.sweep import expand, rank, run_sweep
 from autolp.backtest.universes import Timeline
 from autolp.strategies import rules
-from autolp.strategies.bars import Bar, atr
+from autolp.strategies.bars import Bar, atr, rsi
 from autolp.strategies.data import History
 from autolp.strategies.engine import Engine
 from autolp.strategies.params import (
@@ -18,6 +18,7 @@ from autolp.strategies.params import (
     ExitParams,
     FilterParams,
     ManageParams,
+    ReversalParams,
     RiskParams,
     StrategyParams,
 )
@@ -26,6 +27,7 @@ from autolp.strategies.risk import Breaker, check_exit, manage_stop, size_positi
 from autolp.strategies.rules import Evaluation
 from tests.unit.test_strategies import (
     T0,
+    bars_from,
     breakout_bars,
     features,
     momentum_history,
@@ -116,6 +118,60 @@ def test_filters_fail_on_missing_input_and_bound_the_trend() -> None:
     assert rules.momentum(replace(hot, breadth=60.0), p).failed == ["token_trend"]
     unknown = rules.momentum(replace(view(breakout_bars()), breadth=60.0), p)
     assert unknown.checks["token_trend"] is None
+
+
+def test_1h_filter_skips_tokens_that_just_pumped() -> None:
+    p = replace(PARAMS, filters=FilterParams(max_ret_1h_pct=5))
+    assert rules.momentum(view(breakout_bars(), ret_1h_pct=3.0), p).failed == []
+    assert rules.momentum(view(breakout_bars(), ret_1h_pct=12.0), p).failed == ["token_trend_1h"]
+    assert rules.momentum(view(breakout_bars()), p).checks["token_trend_1h"] is None
+
+
+def test_rsi() -> None:
+    assert rsi([1, 2, 3], 3) is None
+    assert rsi([1, 2, 3, 4], 3) == 100 and rsi([4, 3, 2, 1], 3) == 0
+    assert rsi([1, 1, 1, 1], 3) == 50
+    assert rsi([1, 2, 1, 2, 1], 2) == pytest.approx(37.5)  # Wilder smoothing
+
+
+def dip_bars(last: float = 0.85, before: float = 0.84) -> list[Bar]:
+    # Flat at 1.0 for 4 hours, a slide to 0.84, then the last candle.
+    return bars_from([1.0] * 50 + [0.95, 0.9, 0.87, 0.85, 0.84, before, last])
+
+
+def rev(**kw: object) -> StrategyParams:
+    return replace(PARAMS, enabled=("reversal",), reversal=ReversalParams(**kw))  # type: ignore[arg-type]
+
+
+def test_reversal_buys_a_sharp_fall_with_the_shared_checks() -> None:
+    sig = rules.reversal(view(dip_bars()), rev())
+    assert sig.failed == [], sig.checks
+    assert sig.values["drop_pct"] == pytest.approx(15.08, abs=0.01)  # high 1.001 -> 0.85
+    s = sig.setup
+    assert s is not None and s.stop == pytest.approx(0.85 * 0.94)
+    assert s.target == pytest.approx(0.85 * 1.06) and s.max_hold_hours == 2
+    assert rules.reversal(view(dip_bars()), rev(min_drop_pct=20)).failed == ["drop"]
+    assert rules.reversal(view(dip_bars()), rev(max_drop_pct=10)).failed == ["drop"]
+    short = rules.reversal(view(dip_bars()[-10:]), rev())
+    assert short.checks["drop"] is None and short.setup is None
+    warn = rules.reversal(view(dip_bars(), risk_flags=["x"]), rev())
+    assert warn.failed == ["no_risk_warnings"]
+    assert "reversal" not in PARAMS.enabled  # research only
+
+
+def test_reversal_options_rsi_confirmation_and_buying() -> None:
+    v = view(dip_bars())
+    assert rules.reversal(v, rev(max_rsi=30)).failed == []  # after a slide: oversold
+    assert rules.reversal(v, rev(max_rsi=5)).failed == ["oversold"]
+    # 0.84 -> 0.8405 is bullish but not above the previous high (0.841); 0.85 is.
+    weak = view(dip_bars(last=0.8405))
+    assert rules.reversal(weak, rev(confirm=True)).failed == ["recovery_candle"]
+    assert rules.reversal(v, rev(confirm=True)).failed == []
+    assert rules.reversal(v, rev(min_buy_share=0.7)).failed == ["buying"]  # share 0.6
+    assert (
+        rules.reversal(view(dip_bars(), buy_share_1h=None), rev(min_buy_share=0.5)).checks["buying"]
+        is None
+    )
 
 
 def test_breadth_counts_fresh_eligible_tokens_only() -> None:
@@ -243,6 +299,9 @@ def test_grid_expansion_and_validation() -> None:
     )
     with pytest.raises(SystemExit, match="cannot change"):
         expand({"variants": [{"name": "x", "set": {"strategy.data.candles_needed": 10}}]})
+    with pytest.raises(SystemExit, match="unknown universe"):
+        expand({"variants": [{"name": "x", "universe": "early"}]})
+    assert expand({"universe": "random", "variants": [{"name": "x"}]})[0].universe == "random"
     with pytest.raises(SystemExit, match="duplicate"):
         expand({"variants": [{"name": "x"}, {"name": "x"}]})
 
