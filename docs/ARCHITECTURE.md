@@ -121,10 +121,13 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 | holders | 60 min | Helius largest accounts + owner resolution, 25 tokens/run, refresh 24h | `holder_snapshots` |
 | quotes | 15 min | Jupiter quote, sell $1,000 → USDC, tokens with liq ≥ $150K and 24h vol ≥ $500K | `swap_quotes` |
 | tracking | 60 min | — | active ↔ dormant transitions |
+| fast prices (loop) | 2 s | Jupiter Price V3, one request for the shortlist: open paper positions, then tokens eligible in the last 2 h, at most 50 | `price_ticks`, only when a token's price or slot changed |
+| fast_prices | 1 min | — (summary of the loop) | `collector_runs`: polls, failures, rate limits; one raw sample per minute |
 
 ### Data rules
 
 - Every provider response is stored verbatim in `raw_observations`; normalized rows carry `raw_observation_id` and share the response's `fetched_at` as `observed_at`.
+- **Exception: fast prices.** Storing every Price V3 response would add about 43,000 raw payloads a day. The `fast_prices` job instead keeps one response per minute (linked to its `collector_runs` row). `price_ticks` keeps the parsed price, slot (`block_id`) and liquidity of every change. Polls, failures and 429s are counted per minute, so a polling gap can be told apart from an unchanged price. `price_ticks` is compressed after a day.
 - Universe tiers: **active** (polled every 5 min), **dormant** (below $25K liquidity / $25K 24h volume for 24h; polled hourly), **excluded** (non-meme asset class). Nothing is deleted, so tokens that later fail stay in the dataset (no survivorship bias).
 - Classifier v1 (`autolp/universe.py`) works by exclusion because Jupiter's `meme` tag is sparse: excluded tags (stocks, RWA, stable, LST, DeFi, infra, major), excluded mints, manual list; otherwise `meme` (tag or meme launchpad) or `meme_candidate`.
 - Security: active mint/freeze authority and risky Token-2022 extensions (permanent delegate, transfer hook, transfer fee > 0, pausable, non-transferable, default-frozen, mint close authority) → `risky`. Missing/unparseable account → `unknown`, never `ok`.
@@ -144,6 +147,8 @@ Acceptance: `make up` starts the stack; `make test` passes; `docker compose rest
 ### Request budget (observed in the first live run)
 
 Jupiter ≈ 12 + ~4 + ~50 requests per 15 min (discovery, snapshots, quotes) — well under 1 req/s. DEX Screener ≈ 10 req / 5 min. GeckoTerminal ≈ 1.5 req/min average, 6/min peak: the advertised 30/min free limit is not sustainable in practice (constant 429s above ~4/min on 2026-10-10), so 5-minute candles cover only the 30 most liquid active tokens. Phase 3 should point this budget at watchlist candidates. Helius ≈ 80 calls/hour ≈ 60K/month of the 1M free credits.
+
+**2026-10-24.** Jupiter ≈ 670 requests/hour (0.19 req/s) before fast prices. The fast-price loop adds 0.5 req/s, for about 0.7 of the 1 req/s free budget. Every Jupiter request shares one rate limiter, so the key stays within its budget, and jobs that burst (quotes, paper marks) may wait slightly longer. Polling every second (`COLLECTION__FAST_PRICES_SECONDS=1`) needs a Jupiter Pro key with a higher `JUPITER__REQUESTS_PER_SECOND`.
 
 ## 7. Data explorer (built before Phase 3)
 

@@ -1,4 +1,4 @@
-"""Jupiter Tokens V2 (discovery + token-level market data) and Swap quote API."""
+"""Jupiter Tokens V2 (discovery + token-level market data), Price V3 and Swap quote API."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -143,6 +143,35 @@ def parse_quote(payload: dict[str, Any]) -> Quote:
     )
 
 
+PRICE_MAX_IDS = 50  # Price V3 accepts at most 50 mints per request
+
+
+@dataclass(frozen=True)
+class Price:
+    """One Price V3 entry: the USD price derived from recent trades, and the slot
+    (`blockId`) it was last updated at."""
+
+    mint: str
+    usd_price: float
+    block_id: int | None
+    liquidity_usd: float | None
+
+
+def parse_prices(payload: Any) -> list[Price]:
+    """Mints without a usable price (unknown or no recent trade) are left out."""
+    out: list[Price] = []
+    if not isinstance(payload, dict):
+        return out
+    for mint, d in sorted(payload.items()):
+        if not isinstance(d, dict):
+            continue
+        price = as_float(d.get("usdPrice"))
+        if price is None or price <= 0:
+            continue
+        out.append(Price(mint, price, as_int(d.get("blockId")), as_float(d.get("liquidity"))))
+    return out
+
+
 class JupiterClient:
     def __init__(self, settings: JupiterSettings, **kw: Any) -> None:
         headers = {"x-api-key": settings.api_key.get_secret_value()} if settings.api_key else None
@@ -156,6 +185,11 @@ class JupiterClient:
 
     async def search(self, mints: list[str]) -> ProviderResponse:
         return await self.http.get_json("/tokens/v2/search", {"query": ",".join(mints)})
+
+    async def prices(self, mints: list[str]) -> ProviderResponse:
+        if not 0 < len(mints) <= PRICE_MAX_IDS:
+            raise ValueError(f"prices() takes 1-{PRICE_MAX_IDS} mints, got {len(mints)}")
+        return await self.http.get_json("/price/v3", {"ids": ",".join(mints)})
 
     async def quote(
         self, input_mint: str, output_mint: str, amount_raw: int, slippage_bps: int = 300

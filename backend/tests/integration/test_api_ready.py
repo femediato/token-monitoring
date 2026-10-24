@@ -11,4 +11,4 @@ def test_ready_reports_migrations_at_head(engine: object) -> None:
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["revision"] == body["head"] == "0009"
+    assert body["revision"] == body["head"] == "0010"

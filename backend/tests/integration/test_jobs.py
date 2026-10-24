@@ -28,8 +28,10 @@ from autolp.db.models import (
     MarketWindowStats,
     Pool,
     PoolSnapshot,
+    PriceTick,
     RawObservation,
     RunStatus,
+    ScoreEvaluation,
     SwapQuote,
     Token,
     TokenDiscovery,
@@ -421,3 +423,45 @@ async def test_pools_snapshot_primary_pool_by_address(
         wif = await s.get_one(Token, WIF)
     assert snaps[BONK].pool_address == deep and snaps[BONK].reserve_quote
     assert wif.primary_pool == pairs[1]["pairAddress"]
+
+
+@respx.mock
+async def test_fast_prices_shortlist_ticks_and_minute_summary(
+    collector: Collector, factory: Factory
+) -> None:
+    now = utcnow()
+    async with factory() as s, s.begin():
+        for mint, eligible in ((BONK, True), (WIF, False)):
+            s.add(
+                ScoreEvaluation(
+                    token_mint=mint,
+                    evaluated_at=now - timedelta(minutes=10),
+                    model_version="v1.1",
+                    hourly=False,
+                    eligible=eligible,
+                    critical=False,
+                    reasons=[],
+                    features={},
+                )
+            )
+    route = respx.get("https://api.jup.ag/price/v3").mock(
+        return_value=httpx.Response(200, json=load_fixture("jupiter_price.json"))
+    )
+    fp = collector.fast
+    await fp.poll()
+    await fp.poll()  # same prices and slots: nothing new to store
+    assert route.call_count == 2
+    assert route.calls[0].request.url.params["ids"] == BONK  # eligible only
+    run = await run_recorded(factory, "fast_prices", fp.summary)
+    assert run.status == RunStatus.SUCCESS and run.api_credits_used == 2
+    async with factory() as s:
+        ticks = (await s.scalars(select(PriceTick))).all()
+        raw = await s.scalar(select(func.count()).where(RawObservation.collector_run_id == run.id))
+    # The fixture also prices SOL, which is stored too (it came back in the response).
+    assert {t.token_mint for t in ticks} == {BONK, "So11111111111111111111111111111111111111112"}
+    assert run.rows_written == 2 and raw == 1
+
+    route.mock(return_value=httpx.Response(500, text="down"))
+    await fp.poll()
+    failed = await run_recorded(factory, "fast_prices", fp.summary)
+    assert failed.status == RunStatus.FAILED and "1 polls failed" in (failed.error or "")

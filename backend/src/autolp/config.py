@@ -98,6 +98,16 @@ class CollectionSettings(BaseModel):
     dormant_after_hours: int = 24
 
     stale_after_minutes: int = 15
+
+    # Fast prices (Jupiter Price V3) for the shortlist: tokens eligible in the last
+    # `fast_prices_eligible_hours` plus open paper positions, one request per poll. On the
+    # free Jupiter tier (1 req/s shared by every Jupiter job) 2 s fits; 1 s needs a Pro key.
+    fast_prices_enabled: bool = True
+    fast_prices_seconds: float = 2.0
+    fast_prices_max_tokens: int = 50  # Price V3 limit per request
+    fast_prices_shortlist_minutes: float = 5
+    fast_prices_eligible_hours: float = 2
+    fast_prices_flush_seconds: float = 10
     manual_exclude_mints: list[str] = []
 
 

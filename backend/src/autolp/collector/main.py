@@ -109,10 +109,17 @@ async def main() -> None:
 
     scheduler.start()
     log.info("collector_started", env=settings.app_env.value, jobs=len(scheduler.get_jobs()))
+    fast = (
+        asyncio.create_task(collector.fast.run(stop))
+        if settings.collection.fast_prices_enabled
+        else None
+    )
     await stop.wait()
 
     log.info("collector_stopping")
     scheduler.shutdown(wait=False)
+    if fast is not None:
+        await fast
     await collector.aclose()
     await engine.dispose()
 

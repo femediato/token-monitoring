@@ -248,6 +248,21 @@ class Candle5m(Base):
     fetched_at: Mapped[datetime]
 
 
+class PriceTick(Base):
+    """Fast price for a shortlisted token (hypertable, compressed after a day). A row is
+    written only when the price or its slot changed since the previous poll; polls, failures
+    and rate limits per minute are in the `fast_prices` collector_runs rows."""
+
+    __tablename__ = "price_ticks"
+
+    token_mint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    observed_at: Mapped[datetime] = mapped_column(primary_key=True)  # response received
+    source: Mapped[str] = mapped_column(String(32))
+    price_usd: Mapped[float] = mapped_column(Double)
+    block_id: Mapped[int | None] = mapped_column(BigInteger)  # slot of the last update
+    liquidity_usd: Mapped[float | None] = mapped_column(Double)
+
+
 class TokenSecurity(Base):
     """On-chain mint permissions and risky Token-2022 extensions, append-only history."""
 

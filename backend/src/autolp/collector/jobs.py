@@ -14,8 +14,9 @@ from sqlalchemy import ColumnElement, and_, func, select, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from autolp.collector.fast_prices import FastPrices
 from autolp.collector.runs import JobResult
-from autolp.config import Settings
+from autolp.config import JupiterSettings, Settings
 from autolp.db.base import utcnow
 from autolp.db.models import (
     AlertObservation,
@@ -133,6 +134,14 @@ class Collector:
         self.cfg = settings.collection
         self.factory = factory
         self.jup, self.dex, self.gecko, self.rpc = jup, dex, gecko, rpc
+        # Fast prices: no retries (the next poll is due in seconds), but the same rate
+        # limiter as every other Jupiter request, so the key's budget is shared.
+        fast_settings = JupiterSettings.model_validate(
+            {**jup.http.settings.model_dump(), "max_retries": 0}
+        )
+        self.fast_jup = JupiterClient(fast_settings)
+        self.fast_jup.http.limiter = jup.http.limiter
+        self.fast = FastPrices(factory, self.fast_jup, self.cfg)
 
     @classmethod
     def from_settings(cls, settings: Settings, factory: Factory) -> "Collector":
@@ -146,7 +155,7 @@ class Collector:
         )
 
     async def aclose(self) -> None:
-        for client in (self.jup, self.dex, self.gecko, self.rpc):
+        for client in (self.jup, self.fast_jup, self.dex, self.gecko, self.rpc):
             await client.aclose()
 
     async def _mints(self, *statuses: TrackingStatus) -> list[str]:

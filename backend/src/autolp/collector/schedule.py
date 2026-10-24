@@ -57,6 +57,9 @@ def job_specs(settings: Settings) -> list[JobSpec]:
         JobSpec(
             "strategy_signals", 15, 600, lambda col: partial(run_strategy_signals, col.factory)
         ),
+        # Fast prices for the shortlist: the polling loop runs on its own (collector/main.py);
+        # this job records each minute's polls and keeps one raw sample.
+        JobSpec("fast_prices", 1, 45, lambda col: col.fast.summary),
         # Paper trading (Phase 7): executable quotes only, nothing is signed or sent.
         JobSpec(
             "paper_trading",
