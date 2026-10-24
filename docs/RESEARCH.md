@@ -205,3 +205,30 @@ The whole market drifted down. Eligible tokens did slightly worse (24h: −3.2% 
   - shorter holds.
 - **Short selling** is where "pumps reverse" would pay. It is out of scope for v1 (no live trading, spot only), so it is not tested.
 
+## Data and method upgrade: 2026-10-24
+
+**Fast prices (live since 2026-10-24 20:05 UTC):**
+- Jupiter Price V3 is polled every 2 s for the shortlist: about 23 tokens, the eligible ones plus open paper positions (`docs/ARCHITECTURE.md`, section 6).
+- First 20 minutes:
+  - 30 polls a minute, with no failures or 429s;
+  - other jobs unchanged.
+- **First observation:** a token's Jupiter price changes every 6.4 s at the median, and every 30 s or more for 10% of updates. Jupiter's price follows trades, so polling faster than about 2 s would mostly return the same price.
+- Phase 2 (about 1 Nov 2026) measures how much of the paper leakage these prices could recover:
+  - entry drift, +0.9% per trade on average and +3.0% for momentum;
+  - stop overshoot, 0.9%.
+
+**Event study round 1** (`make events GRID=round1 END=2026-10-24T20:00`):
+- **Window:** 2026-10-10 → 10-24; 79,325 hourly observations; input digest `8d6af3e5002f0048…`.
+- **Round trip:** 2.15%.
+- **Results:**
+  - The round-2 forward-return study was reproduced, now with day-block 95% intervals.
+  - **No condition clears the edge bar** (mean ≥ 2× the round trip and positive on most days).
+  - Pumps reverse clearly: after a 1h rise > 10%, the next 4h averaged −7.2% (interval −8.6% to −6.0%), and 0 of 15 days were positive.
+  - The best dip condition, "fell 15–30% in 4h", gains +1.0% over the next hour (interval +0.4% to +1.7%; 13 of 15 days positive). That is less than the 2.15% round trip.
+
+**sweep-v3:** day-block intervals, regime tags, walk-forward folds and the bar (`docs/BACKTESTING.md`, section 11).
+- Re-running round 2 under sweep-v3 was stopped by the host running out of memory. This machine has 3.7 GB, and three forked workers on 13 days of data is too much.
+- Run it with `--workers 1`, or on a bigger machine, as the data grows.
+
+**Dune (Phase 4a):** client, query (`research/dune/ohlcv_5m.sql`) and comparison script (`research/scripts/dune_spike.py`) are ready. The spike runs once a Dune API key is in `.env`.
+

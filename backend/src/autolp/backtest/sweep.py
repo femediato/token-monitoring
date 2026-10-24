@@ -50,6 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from autolp.backtest import robustness as rb
 from autolp.backtest.data import BacktestData, first_evaluation_at, load
 from autolp.backtest.metrics import summarize
 from autolp.backtest.params import BACKTEST_VERSION, BT, UNIVERSE_LABELS
@@ -59,7 +60,7 @@ from autolp.config import get_settings
 from autolp.db.session import make_engine, make_sessionmaker
 from autolp.strategies.params import PARAMS, STRATEGY_VERSION
 
-SWEEP_VERSION = "sweep-v2"
+SWEEP_VERSION = "sweep-v3"
 # Inputs the loaded data depends on: a variant cannot change them.
 FROZEN_PREFIXES = ("strategy.data.", "strategy.filters.min_breadth_tokens", "backtest.")
 
@@ -148,13 +149,19 @@ def run_variant(v: Variant, scenarios: Sequence[str]) -> dict[str, Any]:
             metrics[s.name]["median_return_pct"] = (
                 statistics.median(t["return_pct"] for t in ts) if ts else None
             )
+        # Each trade is tagged with the market regime at its entry (breadth of eligible
+        # tokens); the digest is of the engine's own trades, before tagging.
+        tagged = [
+            {**t, "regime": rb.regime(data.history.breadth(datetime.fromisoformat(t["entry_at"])))}
+            for t in eng.closed
+        ]
         out["scenarios"][sname] = {
             "digest": eng.digest(),
             "metrics": metrics,
             "signals": sum(1 for d in eng.decisions if d.action == "signal"),
             "rejections": _count(d.reason for d in eng.decisions if d.action == "reject"),
             "cancels": _count(d.reason for d in eng.decisions if d.action == "cancel"),
-            "trades": eng.closed,
+            "trades": tagged,
         }
     return out
 
@@ -190,6 +197,8 @@ def rank(
     results: list[dict[str, Any]],
     scenario: str,
     min_trades: int,
+    windows: dict[str, tuple[datetime, datetime]] | None = None,
+    bar: rb.Bar = rb.BAR,
 ) -> list[dict[str, Any]]:
     """One row per variant: development metrics (the ranking), validation alongside,
     the stress result, the uplift over its baseline and the worst neighbour."""
@@ -222,7 +231,16 @@ def rank(
             "baseline": v.baseline,
             "uplift_expectancy_pct": None,
             "worst_neighbour_return_pct": None,
+            "dev_ci_pct": None,
+            "val_ci_pct": None,
+            "dev_regimes": None,
         }
+        if windows is not None:
+            trades = r["scenarios"][scenario]["trades"]
+            (d0, d1), (v0, v1) = windows["development"], windows["validation"]
+            row["dev_ci_pct"] = rb.bootstrap_ci(trades, d0, d1, seed=v.name)
+            row["val_ci_pct"] = rb.bootstrap_ci(trades, v0, v1, seed=v.name)
+            row["dev_regimes"] = rb.by_regime(trades, d0, d1)
         if v.baseline is not None:
             b = by_name[v.baseline]["scenarios"][scenario]["metrics"]["development"]
             if dev["expectancy_pct"] is not None and b["expectancy_pct"] is not None:
@@ -251,11 +269,17 @@ def rank(
     )
     for i, x in enumerate(rows, 1):
         x["rank"] = i
+        x["fails"] = rb.verdict(x, bar)
+        x["passes"] = not x["fails"]
     return rows
 
 
 def _f(v: Any, spec: str = "{:+.2f}") -> str:
     return "-" if v is None else spec.format(v)
+
+
+def _ci(ci: Any) -> str:
+    return "-" if ci is None else f"{ci[0]:+.2f} .. {ci[1]:+.2f}"
 
 
 def markdown(report: dict[str, Any]) -> str:
@@ -279,18 +303,59 @@ def markdown(report: dict[str, Any]) -> str:
         "scenario agree, and it beats its random-entry baseline.",
         "",
         "| # | Variant | Universe | Dev trades | Dev return % | Dev PF | Dev exp. % | Dev max DD % | "
-        "vs random (exp. pp) | Worst neighbour % | Stress dev % | Val trades | Val return % |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "Dev 95% CI exp. % | vs random (exp. pp) | Worst neighbour % | Stress dev % | "
+        "Val trades | Val return % | Folds + % | Bar |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for x in report["ranking"]:
         flag = "" if x["enough_trades"] else " (few trades)"
         lines.append(
             f"| {x['rank']} | {x['name']}{flag} | {x['universe']} | {x['dev_trades']} | {_f(x['dev_return_pct'])} | "
             f"{_f(x['dev_pf'], '{:.2f}')} | {_f(x['dev_expectancy_pct'])} | "
-            f"{_f(x['dev_max_dd_pct'], '{:.1f}')} | {_f(x['uplift_expectancy_pct'])} | "
+            f"{_f(x['dev_max_dd_pct'], '{:.1f}')} | {_ci(x.get('dev_ci_pct'))} | "
+            f"{_f(x['uplift_expectancy_pct'])} | "
             f"{_f(x['worst_neighbour_return_pct'])} | {_f(x['stress_dev_return_pct'])} | "
-            f"{x['val_trades']} | {_f(x['val_return_pct'])} |"
+            f"{x['val_trades']} | {_f(x['val_return_pct'])} | "
+            f"{_f(x.get('fold_consistency_pct'), '{:.0f}')} | "
+            f"{'pass' if x.get('passes') else 'fail'} |"
         )
+    passing = [x["name"] for x in report["ranking"] if x.get("passes")]
+    lines += [
+        "",
+        f"**Bar** (docs/BACKTESTING.md, section 11): {len(passing)} of "
+        f"{len(report['ranking'])} variants pass"
+        + (f": {', '.join(passing)}." if passing else "."),
+    ]
+    wf = report.get("walk_forward")
+    if wf:
+        lines += [
+            "",
+            f"## Walk-forward (fit {wf['params']['fit_days']} days, test "
+            f"{wf['params']['test_days']} days)",
+            "",
+            "Each fold picks the variant with the best fitting-window P/L and measures it on "
+            "the next, unseen window. The sum is what choosing from this sweep would have "
+            "earned out of sample.",
+            "",
+            "| Test window | Chosen | Fit P/L % | Test P/L % | Test trades |",
+            "|---|---|---|---|---|",
+        ]
+        for r in wf["folds"]:
+            if r["chosen"] is None:
+                lines.append(
+                    f"| from {r['fit_start'][:16]} | (no variant with enough trades) | | | |"
+                )
+                continue
+            lines.append(
+                f"| {r['test_start'][:16]} -> {r['test_end'][:16]} | {r['chosen']} | "
+                f"{_f(r['fit_pnl_pct'])} | {_f(r['test_pnl_pct'])} | {r['test_trades']} |"
+            )
+        lines += [
+            "",
+            f"Always the best: {_f(wf['best_test_pnl_pct'])}% out of sample; "
+            f"the best only if its fit was positive (else cash): "
+            f"{_f(wf['best_if_positive_test_pnl_pct'])}%.",
+        ]
     lines += ["", "Method and limitations: docs/BACKTESTING.md, section 11."]
     return "\n".join(lines)
 
@@ -300,6 +365,17 @@ def build_report(
 ) -> dict[str, Any]:
     scenario = grid.get("rank_scenario", "paper")
     parts = splits(data.start, data.end, BT)
+    windows = {p.name: (p.start, p.end) for p in parts[:2]}
+    bar = rb.Bar(**grid.get("bar", {}))
+    wf = grid.get("walk_forward", {"fit_days": 4, "test_days": 2, "min_trades": 10})
+    fold_list = rb.folds(data.start, parts[1].end, wf["fit_days"], wf["test_days"])
+    equity = PARAMS.risk.starting_equity_usd
+    by_name = {r["name"]: r["scenarios"][scenario]["trades"] for r in results}
+    walk = rb.walk_forward(by_name, fold_list, equity=equity, min_trades=int(wf["min_trades"]))
+    walk["params"] = wf
+    ranking = rank(variants, results, scenario, int(grid.get("min_trades", 10)), windows, bar)
+    for row in ranking:
+        row["fold_consistency_pct"] = rb.fold_consistency(by_name[row["name"]], fold_list, equity)
     h = hashlib.sha256(data.input_digest.encode())
     for v, r in zip(variants, results, strict=True):
         h.update(json.dumps([v.name, v.universe, v.overrides], sort_keys=True).encode())
@@ -323,7 +399,9 @@ def build_report(
         "variants": [
             {"name": v.name, "universe": v.universe, "overrides": v.overrides} for v in variants
         ],
-        "ranking": rank(variants, results, scenario, int(grid.get("min_trades", 10))),
+        "ranking": ranking,
+        "walk_forward": walk,
+        "bar": {"min_oos_trades": bar.min_oos_trades, "stress_positive": bar.stress_positive},
         "results": results,
     }
 

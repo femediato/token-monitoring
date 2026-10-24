@@ -138,7 +138,7 @@ The same window over the same stored data gives the same two digests. Stored dat
 - **Primary pool.** Candles come from each token's current primary pool, as in the strategy replay.
 - **Liquidity.** Liquidity for sizing comes from the evaluation (up to 20 minutes old). The cost estimate is valid only up to the $1,000 quoted size, which also caps every position.
 
-## 11. Strategy research sweeps (sweep-v2)
+## 11. Strategy research sweeps (sweep-v3)
 
 ```
 make sweep GRID=round1 [END=2026-10-15T17:00]   # runs on the host against autolp_dev
@@ -158,5 +158,43 @@ A sweep runs many variants of the strategies on the same stored data and ranks t
 4. **Robustness:** each grid point shows its **worst neighbour**, the worst development return one step away along one axis. A good result surrounded by bad neighbours is noise.
 5. **Stress:** the development return at 1.5× costs is shown.
 6. **No adoption from a backtest alone:** a shortlist goes to parallel paper accounts (`docs/PAPER_TRADING.md`), which collect data the sweep never saw.
+
+**Added in sweep-v3** (`backtest/robustness.py`):
+
+- **Confidence interval:** a 95% day-block bootstrap of the expectancy per trade, for development and for validation. Whole UTC days of trades are resampled, because trades on the same day share one market. The interval is deterministic and seeded by the variant's name.
+- **Regime at entry:** each trade is tagged with market breadth at entry: `up` above 55% of eligible tokens up over 4h, `down` below 45%, `flat` in between, `unknown` without breadth. Development expectancy is reported per regime, so a variant that only worked in one regime shows it.
+- **Walk-forward:** rolling folds over the unsealed data (grid `walk_forward`, default 4 days to fit, 2 days to test, stepping 2 days). In each fold:
+  - the variant with the best fitting-window P/L (at least `min_trades` trades) is chosen;
+  - its P/L on the next, unseen window is recorded.
+
+  Two procedures are summed: "always the best", and "the best only if its fit was positive, else cash". Both measure the sweep-and-pick process itself out of sample. Each variant also shows "Folds +": the share of test windows in which it made money.
+- **The bar** (grid `bar`). A variant is proposed for a paper account only if it has:
+  - a positive development return;
+  - at least `min_oos_trades` (100) validation trades;
+  - a positive validation return;
+  - a validation 95% interval above 0;
+  - a better expectancy than its random baseline;
+  - no losing neighbour;
+  - a positive development return at 1.5× costs.
+
+  The report lists the reasons each variant fails.
+
+## 12. Event studies (events-v1)
+
+```
+make events GRID=round1 [END=2026-10-24T20:00]   # host, reads autolp_dev; ~30 s
+```
+
+An event study asks what happened after a condition held, before any trading rule is built. Code: `backtest/events.py`; grids: `research/events/*.json`; output: `reports/events/<grid>-<end>/`.
+
+- **Population:** hourly evaluations of the baseline candidates (section 5), eligible or not, so tokens that later died are included.
+- **Forward return:** the price of the same token's evaluation h hours later, clipped to [−100%, +200%].
+  - A missing later price is counted as missing, not as a return.
+  - Dead tokens therefore flatter every row, and the missing share is shown.
+- **Conditions:** bounds on features, e.g. `{"ret_1h_pct": [10, null]}`. A missing feature never satisfies a condition.
+- **Reported:** n, mean, median, share positive, positive days, a day-block 95% interval, and the mean net of the round-trip cost.
+- **Edge bar:** a condition is worth a trading rule only if its mean gross return is at least 2× the round trip, and it was positive on most days.
+  - Round trip = 2 × (median quoted one-way cost of eligible tokens + the paper-calibrated 0.7% fill shortfall), about 2.2%.
+  - Overlapping horizons make n much larger than the independent evidence, so the day counts and the interval matter more than n.
 
 Round 1 (`research/grids/round1.json`) was defined after the first paper results (11–15 Oct). That window is in-sample for every idea in it.

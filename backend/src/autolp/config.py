@@ -58,6 +58,14 @@ class GeckoTerminalSettings(ProviderSettings):
     rate_limited_backoff_seconds: float = 30.0
 
 
+class DuneSettings(ProviderSettings):
+    """Dune Analytics API (historical research data only; never read by live jobs)."""
+
+    base_url: str = "https://api.dune.com/api/v1"
+    requests_per_second: float = 0.5
+    timeout_seconds: float = 60.0
+
+
 class CollectionSettings(BaseModel):
     """Cadences, batch sizes and tracking floors for the collector (Phase 2)."""
 
@@ -135,6 +143,7 @@ class Settings(BaseSettings):
     dexscreener: DexScreenerSettings = DexScreenerSettings()
     helius: HeliusSettings = HeliusSettings()
     geckoterminal: GeckoTerminalSettings = GeckoTerminalSettings()
+    dune: DuneSettings = DuneSettings()
 
     collector_heartbeat_seconds: int = 60
     collection: CollectionSettings = CollectionSettings()

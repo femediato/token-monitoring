@@ -1,0 +1,20 @@
+{
+ "name": "round1",
+ "description": "Round 1 (2026-10-24): the round-2 forward-return study as a reproducible event study (pumps, dips, reversal proxies), plus the eligibility and size splits.",
+ "horizons": [1, 4, 24],
+ "edge_multiple": 2,
+ "conditions": [
+  {"name": "eligible", "when": {"eligible": true}},
+  {"name": "not eligible", "when": {"eligible": false}},
+  {"name": "pumped 1h > 10%", "when": {"ret_1h_pct": [10, null]}},
+  {"name": "pumped 4h >= 15%", "when": {"ret_4h_pct": [15, null]}},
+  {"name": "fell 4h 15-30%", "when": {"ret_4h_pct": [-30, -15]}},
+  {"name": "fell 4h > 30%", "when": {"ret_4h_pct": [null, -30]}},
+  {"name": "fell 4h > 15%, still falling 1h", "when": {"ret_4h_pct": [null, -15], "ret_1h_pct": [null, 0]}},
+  {"name": "fell 4h > 15%, turning 1h > 2%", "when": {"ret_4h_pct": [null, -15], "ret_1h_pct": [2, null]}},
+  {"name": "fell 4h > 15%, buy share > 55%", "when": {"ret_4h_pct": [null, -15], "buy_share_1h": [0.55, null]}},
+  {"name": "flat 4h (-2..2%), liquid >= $1M", "when": {"ret_4h_pct": [-2, 2], "liquidity_usd": [1000000, null]}},
+  {"name": "market cap >= $50M", "when": {"market_cap": [50000000, null]}},
+  {"name": "eligible, relvol >= 2", "when": {"eligible": true, "relvol_ratio": [2, null]}}
+ ]
+}
