@@ -8,7 +8,7 @@
  ],
  "rank_scenario": "paper",
  "min_trades": 10,
- "base": {},
+ "base": {"strategy.enabled": ["momentum", "pullback", "range"]},
  "variants": [
   {
    "name": "v1 all (current)",

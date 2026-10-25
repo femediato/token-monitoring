@@ -1,4 +1,6 @@
-# Trading strategies — strat-v1
+# Trading strategies — strat-v1.1
+
+**strat-v1.1 (2026-10-25): Range (strategy C) is switched off.** Momentum (A) and Pullback (B) are unchanged. See section 12.
 
 Phase 5 of the master plan: three independent entry/exit rule sets with shared risk rules, producing **paper decisions only**. Nothing here places an order, signs a transaction or holds a key (`live_trading_enabled` is frozen to false). Code: `backend/src/autolp/strategies/` — every threshold is in `params.py`; changing one is a strategy change (bump `STRATEGY_VERSION`, record it here).
 
@@ -42,7 +44,10 @@ A candle is used only once it has closed (`bucket + 5 min ≤ t`); an evaluation
 | A completed five-minute candle confirms recovery | the signal candle is bullish and closes above the previous candle's high |
 | Exit | +15% target, −7% stop, 8 h |
 
-## 5. Strategy C — Range trading
+## 5. Strategy C — Range trading (off since strat-v1.1)
+
+Not in `enabled` since strat-v1.1. The rule and its parameters are kept so the research sweeps can still test it (`strategy.enabled`).
+
 
 | Rule (plan) | Implementation |
 |---|---|
@@ -126,3 +131,18 @@ Exits: `reversal.exit`, default +6% target, −6% stop, 2-hour maximum hold (or 
 
 Known approaches this draws on: short-term oversold bounces (RSI-2 / RSI-14 thresholds, Connors-style), Bollinger-band or z-score reversion to a moving average, and capitulation reversals (a sharp fall on high volume, then selling exhaustion and a reversal candle). The common failure mode in meme coins is the falling knife: a token that falls because it is dying keeps falling. Hence the cap on the fall, the safety checks, and short holds.
 
+## 12. Version history
+
+| Version | From | Change | Why |
+|---|---|---|---|
+| strat-v1 | Phase 5 | Momentum, Pullback and Range | as specified |
+| strat-v1.1 | 2026-10-25 | `enabled` = Momentum, Pullback; Range off | owner decision. Range was the largest paper loss in `main` (63 trades, −$1,573, 16% win rate, profit factor 0.31; 11–23 Oct) and the worst variant in research round 1 and round 2 (`docs/RESEARCH.md`) |
+
+What changes with strat-v1.1:
+- **Entries:** no new Range entries in `main`. Range positions already open keep their own exits (target, stop, max hold) until they close.
+- **Records:** new positions and signals carry `strat-v1.1`, so strat-v1 and strat-v1.1 results never mix. The Strategies page shows only signals of the current version; strat-v1 signals stay in `strategy_signals`.
+- **Research:** the round 1 and round 2 grids set `strategy.enabled` to all three strategies in their `base`, so they reproduce their published results. A sweep variant without `strategy.enabled` now means strat-v1.1.
+- **Replay digest:** changes, because Range signals are no longer evaluated.
+- **Analytics:** per-strategy results still list Range for the trades it made.
+
+This is not strat-v2: no rule or threshold changed. strat-v2 stays reserved for a research variant that clears the bar (`docs/BACKTESTING.md`, section 11).

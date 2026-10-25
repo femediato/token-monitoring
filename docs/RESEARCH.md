@@ -14,9 +14,9 @@ What we know about each strategy, from the paper account `main` (live quotes, 11
 |---|---|---|---|---|---|---|
 | A — Momentum breakout | 14 | −$188 | 43% | 0.43 | −7.4% (38 trades); no better than random entries | losing, least bad; rarely triggers |
 | B — Pullback | 39 | −$844 | 21% | 0.35 | −11.9% (56 trades) | losing |
-| C — Range | 63 | −$1,573 | 16% | 0.31 | −21.9% (61 trades) | **worst; candidate to switch off** |
+| C — Range | 63 | −$1,573 | 16% | 0.31 | −21.9% (61 trades) | **worst; switched off in strat-v1.1 (2026-10-25)** |
 | D — Reversal (buy the dip) | — | — | — | — | −8% to −27% across 61 variants; worse than random entries | **failed in research; not enabled** |
-| strat-v1 (A+B+C) | 116 | −$2,605 (equity −26.1%) | 21% | 0.33 | −22.4% (77 trades) | the `main` account, kept as control |
+| strat-v1 (A+B+C) | 116 | −$2,605 (equity −26.1%) | 21% | 0.33 | −22.4% (77 trades) | the `main` account until 2026-10-25; now strat-v1.1 (A+B) |
 
 **A — Momentum breakout** (buy a close above the previous hour's high on volume and buying pressure).
 - It never reached its +15% target, in paper (0 of 14) or in round 1 (0 of 16 signals). Most trades end at the 4-hour time limit.

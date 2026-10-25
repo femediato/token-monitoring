@@ -1,6 +1,6 @@
 # Paper trading — paper-v2
 
-Phase 7 of the master plan: run the strategies continuously on live data without placing real orders. Code: `backend/src/autolp/paper/`; parameters in `paper/params.py` (changing one is a paper-trading change: bump `PAPER_VERSION` and record it here). Entry and exit rules, sizing and risk limits are strat-v1 (`docs/STRATEGIES.md`), unchanged.
+Phase 7 of the master plan: run the strategies continuously on live data without placing real orders. Code: `backend/src/autolp/paper/`; parameters in `paper/params.py` (changing one is a paper-trading change: bump `PAPER_VERSION` and record it here). Entry and exit rules, sizing and risk limits are the current strategy version (`docs/STRATEGIES.md`): strat-v1 until 2026-10-25, strat-v1.1 (Range off) since. Each position records its `strategy_version`.
 
 **Nothing is signed or sent.** The engine only requests Jupiter swap *quotes* (read-only, the same endpoint as the `quotes` job). There is no wallet, no key and no transaction code.
 

@@ -75,8 +75,10 @@ def group_stats(trades: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
 
 def by_strategy(trades: Sequence[dict[str, Any]], strategies: Sequence[str]) -> dict[str, Any]:
-    """Every enabled strategy (also those without trades), then all trades together."""
-    out = {s: group_stats([t for t in trades if t["strategy"] == s]) for s in strategies}
+    """Every enabled strategy (also those without trades), then strategies that are no
+    longer enabled but have trades, then all trades together."""
+    names = list(dict.fromkeys([*strategies, *sorted({t["strategy"] for t in trades})]))
+    out = {s: group_stats([t for t in trades if t["strategy"] == s]) for s in names}
     out["all"] = group_stats(trades)
     return out
 

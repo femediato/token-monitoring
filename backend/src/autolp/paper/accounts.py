@@ -1,6 +1,6 @@
 """Paper accounts run side by side (paper-v2, docs/PAPER_TRADING.md).
 
-`main` trades strat-v1 as approved and stays untouched: it is the control. Research
+`main` trades the approved strategy version (STRATEGY_VERSION) and stays untouched: it is the control. Research
 accounts forward-test strategy variants from the research sweeps on live data the sweeps
 never saw. Each account has its own cash, positions and risk limits; all of them only
 request quotes. An account is identified by its name, and its overrides are part of its
@@ -27,7 +27,7 @@ class AccountSpec:
         return PaperParams(**{**PAPER.__dict__, "account": self.name})
 
 
-MAIN = AccountSpec("main", "strat-v1 as approved (control)")
+MAIN = AccountSpec("main", "the approved strategy version (control)")
 
 ACCOUNTS: tuple[AccountSpec, ...] = (MAIN,)
 

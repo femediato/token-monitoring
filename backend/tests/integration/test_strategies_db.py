@@ -77,16 +77,16 @@ async def test_live_job_stores_every_check(factory: Factory) -> None:
     await seed(factory, "X", BREAKOUT, eligible=False)  # outside the universe
     at = T0 + timedelta(hours=2, minutes=5, seconds=30)  # breakout candle just closed
     result = await run_strategy_signals(factory, 1, at)
-    assert result.rows_written == 3
+    assert result.rows_written == 2  # momentum and pullback; range is off (strat-v1.1)
     async with factory() as s:
         rows = {r.strategy: r for r in await s.scalars(select(StrategySignal))}
     m = rows["momentum"]
     assert m.token_mint == "A" and m.setup and m.failed == []
     assert m.entry_ref == 1.05 and m.target is not None and m.stop is not None
     assert m.last_candle_at == T0 + timedelta(hours=2)
-    # Too little history for the other two: inputs missing, recorded as None.
+    # Too little history for pullback: inputs missing, recorded as None.
     assert not rows["pullback"].setup and rows["pullback"].checks["uptrend"] is None
-    assert rows["range"].checks["range_found"] is None
+    assert "range" not in rows
 
 
 async def test_replay_is_deterministic_and_point_in_time(factory: Factory) -> None:
@@ -134,12 +134,11 @@ async def test_strategies_api(factory: Factory, engine: object) -> None:
     get_settings.cache_clear()
     with TestClient(app) as c:
         p = c.get("/api/strategies").json()
-        assert p["version"] == "strat-v1" and p["params"]["risk"]["max_positions"] == 3
+        assert p["version"] == "strat-v1.1" and p["params"]["risk"]["max_positions"] == 3
         sig = c.get("/api/strategies/signals").json()
         assert {(i["strategy"], i["setup"]) for i in sig["items"]} == {
             ("momentum", True),
             ("pullback", False),
-            ("range", False),
         }
         st = c.get("/api/strategies/setups?days=90").json()
         assert [i["strategy"] for i in st["items"]] == ["momentum"]

@@ -1,4 +1,4 @@
-"""Trading strategy parameters, version strat-v1 (docs/STRATEGIES.md).
+"""Trading strategy parameters, version strat-v1.1 (docs/STRATEGIES.md).
 
 Changing any value here is a strategy change: bump STRATEGY_VERSION and document it, so
 stored signals and replays stay reproducible. Strategies only ever produce paper decisions.
@@ -7,7 +7,7 @@ stored signals and replays stay reproducible. Strategies only ever produce paper
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from typing import Any
 
-STRATEGY_VERSION = "strat-v1"
+STRATEGY_VERSION = "strat-v1.1"  # strat-v1 without Range (owner decision, 2026-10-25)
 
 
 @dataclass(frozen=True)
@@ -181,7 +181,8 @@ class StrategyParams:
     reversal: ReversalParams = field(default_factory=ReversalParams)
     filters: FilterParams = field(default_factory=FilterParams)
     atr_candles: int = 48  # ATR: mean true range of the last 4 hours of 5-minute candles
-    enabled: tuple[str, ...] = ("momentum", "pullback", "range")
+    # Range (C) is off since strat-v1.1; its rule and parameters stay for research.
+    enabled: tuple[str, ...] = ("momentum", "pullback")
 
 
 PARAMS = StrategyParams()
