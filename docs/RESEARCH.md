@@ -227,8 +227,45 @@ The whole market drifted down. Eligible tokens did slightly worse (24h: −3.2% 
   - The best dip condition, "fell 15–30% in 4h", gains +1.0% over the next hour (interval +0.4% to +1.7%; 13 of 15 days positive). That is less than the 2.15% round trip.
 
 **sweep-v3:** day-block intervals, regime tags, walk-forward folds and the bar (`docs/BACKTESTING.md`, section 11).
-- Re-running round 2 under sweep-v3 was stopped by the host running out of memory. This machine has 3.7 GB, and three forked workers on 13 days of data is too much.
-- Run it with `--workers 1`, or on a bigger machine, as the data grows.
+- The first attempt to re-run round 2 under sweep-v3 (3 forked workers) was stopped by the host running out of memory (3.7 GB). With `--workers 1` it takes 17 minutes and peaks at 1.6 GB; see below.
+
+## Round 2 under sweep-v3: 2026-10-25
+
+- **Command:** `uv run python -m autolp.backtest.sweep --grid ../research/grids/round2.json --end 2026-10-23T20:00 --workers 1 --out ../reports/sweeps-v3` (17 minutes, peak 1.6 GB).
+- **Window and splits:** as round 2. **Digests:** input `454f78e12fa8c033…`, sweep `5c9c63f9c58951c8…`.
+- **Input digest differs from round 2** (`11170ea8…`): stored data inside the window changed after 23 Oct (candles refreshed after the fact). 98 of 104 variants moved, by a few trades and about ±1 pp of development return, e.g. momentum + pullback with the 1h filter at 3%: −6.5% → −7.1%; momentum only: −7.4% → −7.6%. The ranking and every round-2 conclusion are unchanged. Note: a sweep is reproducible only with the same input digest; late data changes the inputs.
+
+**The bar: 0 of 104 variants pass.** Every variant fails at least four tests: development return ≤ 0, fewer than 100 out-of-sample trades, validation 95% interval includes 0, loses at 1.5× costs. Only "momentum only" has a positive validation return (+0.09%, 7 trades; interval −2.8% to +5.1%), which is noise.
+
+**Confidence intervals (development, expectancy per trade, day-block bootstrap):**
+
+| Variant | Dev trades | Dev return | Exp. 95% interval | Val return |
+|---|---|---|---|---|
+| strat-v1 (A+B+C) | 76 | −22.4% | −5.8% .. −2.6% | −6.3% |
+| strat-v1.1 (A+B, now in `main`) | 64 | −13.3% | −5.2% .. −2.8% | −4.9% |
+| A+B, skip 1h pump > 3% | 48 | −7.1% | −5.1% .. +0.3% | −4.2% |
+| random 15/7 4h | 106 | −12.5% | −3.0% .. −0.6% | −6.6% |
+
+Every strat-v1 and strat-v1.1 interval lies wholly below zero: the losses are not bad luck. The 1h filter's interval just reaches zero.
+
+**By market regime at entry** (development, mean return per trade):
+
+| Variant | Up | Flat | Down |
+|---|---|---|---|
+| strat-v1 (A+B+C) | −0.5% (12) | −2.3% (19) | −5.5% (44) |
+| strat-v1.1 (A+B) | −5.2% (16) | −1.1% (18) | −4.9% (30) |
+| A+B, skip 1h pump > 3% | −5.5% (18) | **+2.9% (8)** | −2.2% (22) |
+| Range only | −0.5% (2) | −2.7% (14) | −4.4% (45) |
+| random 15/7 4h | −0.9% (21) | −2.1% (20) | −2.4% (62) |
+| all 104 variants pooled | −3.0% (2,176) | −3.0% (2,762) | −3.4% (5,541) |
+
+- Momentum and pullback lose as much in rising markets as in falling ones, so waiting for an up regime would not rescue them.
+- Range's losses come almost entirely from falling markets; it barely trades in rising ones.
+- The one positive cell (A+B with the 1h filter, flat market) has 8 trades.
+
+**Walk-forward** (fit 4 days, test 2 days; only 2 folds fit before the sealed holdout): always trading the best fitted variant earned −5.8% out of sample; trading it only when its fit was positive earned 0%, because no variant was ever positive on a fitting window, so it held cash.
+
+**Concluded:** under the stricter method, nothing in round 2 is close to deployable; holding cash beats every variant. strat-v1.1 loses less than strat-v1 but still loses with confidence. **Not concluded:** anything about rising markets; there are too few up-regime trades, and the window is almost entirely one falling market.
 
 **Dune (Phase 4a):** client, query (`research/dune/ohlcv_5m.sql`) and comparison script (`research/scripts/dune_spike.py`) are ready. The spike runs once a Dune API key is in `.env`.
 
